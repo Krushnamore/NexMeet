@@ -28,7 +28,9 @@ export const useAgoraRTC = () => {
 
     client.on('user-published', async (user, mediaType) => {
       await client.subscribe(user, mediaType);
-      if (mediaType === 'audio') user.audioTrack?.play();
+      if (mediaType === 'audio') {
+        user.audioTrack?.play();
+      }
       setRemoteUsers(prev => {
         const exists = prev.find(u => u.uid === user.uid);
         if (exists) return prev.map(u => u.uid === user.uid ? { ...u, ...user } : u);
@@ -61,7 +63,6 @@ export const useAgoraRTC = () => {
     let videoTrack = null;
     const errors = { audio: null, video: null };
 
-    // Try microphone — independently from camera
     try {
       audioTrack = await AgoraRTC.createMicrophoneAudioTrack({
         encoderConfig: 'high_quality',
@@ -73,18 +74,17 @@ export const useAgoraRTC = () => {
       setLocalAudioTrack(audioTrack);
     } catch (err) {
       console.warn('Microphone access failed:', err.name, err.message);
-      if (err.name === 'NotAllowedError' || err.code === 'PERMISSION_DENIED') {
-        errors.audio = 'Permission denied. Click 🔒 in the address bar → allow Microphone.';
+      if (err.name === 'NotAllowedError') {
+        errors.audio = 'Mic permission denied. Click the 🔒 icon in browser address bar → allow Microphone.';
       } else if (err.name === 'NotFoundError') {
-        errors.audio = 'No microphone found.';
+        errors.audio = 'No microphone found on this device.';
       } else if (err.name === 'NotReadableError') {
-        errors.audio = 'Microphone is in use by another tab or app.';
+        errors.audio = 'Microphone is in use by another app or tab.';
       } else {
         errors.audio = err.message;
       }
     }
 
-    // Try camera — independently from microphone
     try {
       videoTrack = await AgoraRTC.createCameraVideoTrack({
         encoderConfig: {
@@ -99,12 +99,12 @@ export const useAgoraRTC = () => {
       setLocalVideoTrack(videoTrack);
     } catch (err) {
       console.warn('Camera access failed:', err.name, err.message);
-      if (err.name === 'NotAllowedError' || err.code === 'PERMISSION_DENIED') {
-        errors.video = 'Permission denied. Click 🔒 in the address bar → allow Camera.';
+      if (err.name === 'NotAllowedError') {
+        errors.video = 'Camera permission denied. Click the 🔒 icon in browser address bar → allow Camera.';
       } else if (err.name === 'NotFoundError') {
-        errors.video = 'No camera found.';
+        errors.video = 'No camera found on this device.';
       } else if (err.name === 'NotReadableError') {
-        errors.video = 'Camera is already in use by another tab. Use two different browsers to test locally.';
+        errors.video = 'Camera is in use by another app or tab. Try a different browser.';
       } else {
         errors.video = err.message;
       }
@@ -112,7 +112,6 @@ export const useAgoraRTC = () => {
 
     setDeviceError(errors);
 
-    // Publish whatever succeeded
     const tracksToPublish = [audioTrack, videoTrack].filter(Boolean);
     if (tracksToPublish.length > 0) {
       await client.publish(tracksToPublish);
@@ -160,7 +159,7 @@ export const useAgoraRTC = () => {
 
   const startScreenShare = useCallback(async () => {
     const client = clientRef.current;
-    if (!client) throw new Error('Agora client not initialized');
+    if (!client) throw new Error('Not connected');
 
     const screenTrack = await AgoraRTC.createScreenVideoTrack(
       { encoderConfig: { width: 1920, height: 1080, frameRate: 15, bitrateMax: 1500 } },
@@ -175,7 +174,6 @@ export const useAgoraRTC = () => {
     await client.publish(screenTrack);
     localTracksRef.current.screen = screenTrack;
 
-    // Auto-stop when user clicks browser's "Stop sharing" button
     screenTrack.on('track-ended', async () => {
       await stopScreenShare();
     });

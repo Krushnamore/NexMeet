@@ -6,7 +6,7 @@ import api from '../../services/api';
 const REACTIONS = ['👍', '❤️', '😂', '😮', '👏', '🔥', '✅', '🎉'];
 
 const MessageBubble = ({ msg, isOwn, onPrivateReply }) => (
-  <div style={{ display: 'flex', flexDirection: 'column', gap: 3, alignItems: isOwn ? 'flex-end' : 'flex-start' }} className="animate-fadeIn">
+  <div style={{ display: 'flex', flexDirection: 'column', gap: 3, alignItems: isOwn ? 'flex-end' : 'flex-start' }}>
     {msg.isPrivate && (
       <span style={{ fontSize: '0.65rem', color: 'var(--purple)', fontStyle: 'italic' }}>
         {isOwn ? `Private → ${msg.recipientName}` : `Private from ${msg.senderName}`}
@@ -32,7 +32,7 @@ const MessageBubble = ({ msg, isOwn, onPrivateReply }) => (
             {msg.content}
           </p>
         </div>
-        <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginTop: 2, justifyContent: isOwn ? 'flex-end' : 'flex-start', paddingLeft: isOwn ? 0 : 2 }}>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginTop: 2, justifyContent: isOwn ? 'flex-end' : 'flex-start' }}>
           <span style={{ fontSize: '0.6rem', color: 'var(--text-muted)' }}>
             {format(new Date(msg.timestamp || Date.now()), 'HH:mm')}
           </span>
@@ -57,6 +57,7 @@ export default function ChatPanel({ socket, meetingId, participants = [], onClos
   const [loadingHistory, setLoadingHistory] = useState(true);
   const messagesEndRef = useRef(null);
   const inputRef = useRef(null);
+  const processedIds = useRef(new Set());
 
   useEffect(() => {
     const loadHistory = async () => {
@@ -66,11 +67,12 @@ export default function ChatPanel({ socket, meetingId, participants = [], onClos
           _id: m._id,
           content: m.content,
           senderName: m.senderName || m.sender?.name,
-          senderId: m.sender?._id || m.sender,
+          senderId: String(m.sender?._id || m.sender),
           isPrivate: m.isPrivate,
           recipientName: m.recipientName,
           timestamp: m.createdAt,
         }));
+        msgs.forEach(m => processedIds.current.add(m._id));
         setMessages(msgs);
       } catch {
         console.warn('Could not load chat history');
@@ -89,7 +91,9 @@ export default function ChatPanel({ socket, meetingId, participants = [], onClos
     if (!socket) return;
     const handleMessage = (msg) => {
       setMessages(prev => {
-        if (prev.find(m => m._id && m._id === msg._id)) return prev;
+        // Avoid duplicates using _id tracking
+        if (msg._id && processedIds.current.has(msg._id)) return prev;
+        if (msg._id) processedIds.current.add(msg._id);
         return [...prev, msg];
       });
     };
@@ -100,21 +104,28 @@ export default function ChatPanel({ socket, meetingId, participants = [], onClos
   const sendMessage = useCallback(() => {
     const content = input.trim();
     if (!content || !socket) return;
+
+    const tempId = `local_${Date.now()}`;
+    processedIds.current.add(tempId);
+
+    // Add optimistically for sender
+    setMessages(prev => [...prev, {
+      _id: tempId,
+      content,
+      senderName: user?.name,
+      senderId: String(user?._id),
+      isPrivate: !!privateRecipient,
+      recipientName: privateRecipient?.name,
+      timestamp: new Date().toISOString(),
+    }]);
+
     socket.emit('chat:message', {
       meetingId,
       content,
       recipientId: privateRecipient?.id || null,
       recipientName: privateRecipient?.name || null,
     });
-    setMessages(prev => [...prev, {
-      _id: Date.now().toString(),
-      content,
-      senderName: user?.name,
-      senderId: user?._id,
-      isPrivate: !!privateRecipient,
-      recipientName: privateRecipient?.name,
-      timestamp: new Date().toISOString(),
-    }]);
+
     setInput('');
     setPrivateRecipient(null);
   }, [input, socket, meetingId, privateRecipient, user]);
@@ -134,7 +145,7 @@ export default function ChatPanel({ socket, meetingId, participants = [], onClos
 
       <div style={{ flex: 1, overflowY: 'auto', padding: '12px', display: 'flex', flexDirection: 'column', gap: 10 }}>
         {loadingHistory ? (
-          <div style={{ textAlign: 'center', color: 'var(--text-muted)', fontSize: '0.8rem', padding: '1rem' }}>Loading messages…</div>
+          <div style={{ textAlign: 'center', color: 'var(--text-muted)', fontSize: '0.8rem', padding: '1rem' }}>Loading…</div>
         ) : messages.length === 0 ? (
           <div style={{ flex: 1, display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', gap: 8, color: 'var(--text-muted)', padding: '2rem' }}>
             <span style={{ fontSize: '2rem' }}>💬</span>
@@ -145,8 +156,11 @@ export default function ChatPanel({ socket, meetingId, participants = [], onClos
             <MessageBubble
               key={msg._id || i}
               msg={msg}
-              isOwn={msg.senderId?.toString() === user?._id?.toString()}
-              onPrivateReply={(id, name) => { setPrivateRecipient({ id, name }); inputRef.current?.focus(); }}
+              isOwn={String(msg.senderId) === String(user?._id)}
+              onPrivateReply={(id, name) => {
+                setPrivateRecipient({ id, name });
+                inputRef.current?.focus();
+              }}
             />
           ))
         )}
@@ -160,7 +174,6 @@ export default function ChatPanel({ socket, meetingId, participants = [], onClos
             <button onClick={() => setPrivateRecipient(null)} style={{ background: 'none', border: 'none', cursor: 'pointer', color: 'inherit', fontSize: '1rem' }}>×</button>
           </div>
         )}
-
         <div style={{ display: 'flex', gap: 6, alignItems: 'flex-end' }}>
           <div style={{ flex: 1, position: 'relative' }}>
             <textarea
@@ -173,16 +186,13 @@ export default function ChatPanel({ socket, meetingId, participants = [], onClos
               onKeyDown={e => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); sendMessage(); } }}
               rows={1}
             />
-            <button onClick={() => setShowReactions(p => !p)} style={{ position: 'absolute', right: 8, bottom: 8, background: 'none', border: 'none', cursor: 'pointer', fontSize: '1rem', lineHeight: 1, color: 'var(--text-muted)' }}>
-              😊
-            </button>
+            <button onClick={() => setShowReactions(p => !p)} style={{ position: 'absolute', right: 8, bottom: 8, background: 'none', border: 'none', cursor: 'pointer', fontSize: '1rem', lineHeight: 1, color: 'var(--text-muted)' }}>😊</button>
           </div>
-          <button className="btn-primary" style={{ padding: '9px 13px', flexShrink: 0, fontSize: '0.875rem' }} onClick={sendMessage} disabled={!input.trim()}>↑</button>
+          <button className="btn-primary" style={{ padding: '9px 13px', flexShrink: 0 }} onClick={sendMessage} disabled={!input.trim()}>↑</button>
         </div>
-
         {showReactions && (
           <div className="animate-scaleIn" style={{ marginTop: 8, background: 'var(--bg-card)', border: '1px solid var(--border)', borderRadius: 10, padding: 8, display: 'flex', flexWrap: 'wrap', gap: 4 }}>
-            <p style={{ width: '100%', fontSize: '0.65rem', color: 'var(--text-muted)', fontFamily: 'Syne, sans-serif', marginBottom: 2 }}>Send reaction to all</p>
+            <p style={{ width: '100%', fontSize: '0.65rem', color: 'var(--text-muted)', fontFamily: 'Syne, sans-serif' }}>Send reaction to all</p>
             {REACTIONS.map(e => (
               <button key={e} onClick={() => sendReaction(e)} style={{ background: 'none', border: 'none', cursor: 'pointer', fontSize: '1.375rem', padding: '2px 4px', borderRadius: 6 }}>{e}</button>
             ))}
