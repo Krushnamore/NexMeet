@@ -1,200 +1,129 @@
 import { useState } from 'react';
 
-const ControlButton = ({ icon, label, onClick, active = false, danger = false, disabled = false }) => (
+const ControlButton = ({ icon, label, onClick, active = false, danger = false, disabled = false, badge = null }) => (
   <button
-    className={`control-btn ${active ? 'active' : ''} ${danger ? 'danger' : ''}`}
     onClick={onClick}
     disabled={disabled}
     title={label}
-    style={{ minWidth: 64, opacity: disabled ? 0.5 : 1, cursor: disabled ? 'not-allowed' : 'pointer', border: 'none' }}
+    style={{
+      display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center',
+      gap: 2, padding: '8px 6px', borderRadius: 10, cursor: disabled ? 'not-allowed' : 'pointer',
+      border: `1px solid ${danger ? 'var(--danger)' : active ? 'var(--accent)' : 'var(--border)'}`,
+      background: danger ? 'var(--danger)' : active ? 'var(--accent)' : 'var(--bg-card)',
+      color: (danger || active) ? '#fff' : 'var(--text-secondary)',
+      opacity: disabled ? 0.5 : 1,
+      minWidth: 52, transition: 'all 0.15s ease',
+      boxShadow: active ? '0 0 12px var(--accent-glow)' : 'none',
+      position: 'relative',
+    }}
   >
-    <span style={{ fontSize: '1.25rem', lineHeight: 1 }}>{icon}</span>
-    <span style={{ fontSize: '0.6875rem', fontFamily: 'Syne, sans-serif', fontWeight: 600, letterSpacing: '0.02em' }}>
+    <span style={{ fontSize: '1.2rem', lineHeight: 1 }}>{icon}</span>
+    <span style={{ fontSize: '0.6rem', fontFamily: 'Syne, sans-serif', fontWeight: 600, letterSpacing: '0.02em', whiteSpace: 'nowrap' }}>
       {label}
     </span>
+    {badge && (
+      <div style={{
+        position: 'absolute', top: -4, right: -4,
+        background: 'var(--danger)', color: '#fff',
+        width: 16, height: 16, borderRadius: '50%',
+        fontSize: '0.6rem', fontWeight: 700, display: 'flex', alignItems: 'center', justifyContent: 'center',
+      }}>
+        {badge}
+      </div>
+    )}
   </button>
 );
 
-const NetworkQualityDot = ({ quality }) => {
-  const color = quality === 0 ? 'var(--text-muted)' :
-    quality <= 2 ? 'var(--success)' :
-    quality <= 4 ? 'var(--warning)' : 'var(--danger)';
-  const label = quality === 0 ? 'Unknown' : quality <= 2 ? 'Excellent' : quality <= 4 ? 'Fair' : 'Poor';
-  return (
-    <div className="flex items-center gap-1.5" title={`Network: ${label}`}>
-      <div style={{ width: 8, height: 8, borderRadius: '50%', background: color }} />
-      <span style={{ fontSize: '0.7rem', color: 'var(--text-muted)', fontFamily: 'Syne, sans-serif' }}>{label}</span>
-    </div>
-  );
-};
-
 export default function ControlsBar({
-  isAudioMuted,
-  isVideoOff,
-  isScreenSharing,
-  isRecording,
-  isHandRaised,
-  isChatOpen,
-  isParticipantsOpen,
-  networkQuality,
-  onToggleAudio,
-  onToggleVideo,
-  onToggleScreenShare,
-  onToggleRecording,
-  onToggleHand,
-  onToggleChat,
-  onReaction,
-  onEndMeeting,
-  onLeaveMeeting,
-  isHost,
-  meetingId,
+  isAudioMuted, isVideoOff, isScreenSharing, isRecording, isHandRaised,
+  activePanel, networkQuality, participantCount,
+  onToggleAudio, onToggleVideo, onToggleScreenShare, onToggleRecording,
+  onToggleHand, onToggleChat, onToggleParticipants, onReaction,
+  onEndMeeting, onLeaveMeeting, isHost, meetingId,
 }) {
   const [showReactions, setShowReactions] = useState(false);
-  const [showMoreControls, setShowMoreControls] = useState(false);
-
-  const copyMeetingLink = () => {
-    const link = `${window.location.origin}/join/${meetingId}`;
-    navigator.clipboard.writeText(link);
-  };
-
+  const [showMore, setShowMore] = useState(false);
   const REACTIONS = ['👍', '❤️', '😂', '😮', '🎉', '🔥', '👏', '✅'];
+
+  const copyLink = () => {
+    navigator.clipboard.writeText(`${window.location.origin}/join/${meetingId}`);
+    setShowMore(false);
+  };
 
   return (
     <div style={{
-      background: 'var(--bg-secondary)',
-      borderTop: '1px solid var(--border)',
-      padding: '12px 24px',
-      display: 'flex',
-      alignItems: 'center',
-      justifyContent: 'space-between',
-      gap: 16,
-      position: 'relative',
-      zIndex: 10,
+      background: 'var(--bg-secondary)', borderTop: '1px solid var(--border)',
+      padding: '8px 12px', flexShrink: 0, position: 'relative',
     }}>
-      {/* Left: meeting info */}
-      <div className="flex items-center gap-4" style={{ minWidth: 180 }}>
-        <div>
-          <p style={{ fontFamily: 'Syne, sans-serif', fontSize: '0.8rem', fontWeight: 700, color: 'var(--text-primary)' }}>
-            {meetingId}
-          </p>
-          <NetworkQualityDot quality={networkQuality?.uplink || 0} />
-        </div>
-        {isRecording && (
-          <div className="flex items-center gap-1.5">
-            <div className="recording-indicator" style={{ width: 8, height: 8, borderRadius: '50%', background: 'var(--danger)' }} />
-            <span style={{ fontSize: '0.7rem', color: 'var(--danger)', fontFamily: 'Syne, sans-serif', fontWeight: 700 }}>REC</span>
-          </div>
-        )}
-      </div>
+      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 6, flexWrap: 'wrap' }}>
+        <ControlButton icon={isAudioMuted ? '🔇' : '🎙️'} label={isAudioMuted ? 'Unmute' : 'Mute'} onClick={onToggleAudio} active={!isAudioMuted} danger={isAudioMuted} />
+        <ControlButton icon={isVideoOff ? '📷' : '📹'} label={isVideoOff ? 'Start vid' : 'Stop vid'} onClick={onToggleVideo} active={!isVideoOff} danger={isVideoOff} />
+        <ControlButton icon="🖥️" label={isScreenSharing ? 'Stop' : 'Share'} onClick={onToggleScreenShare} active={isScreenSharing} danger={isScreenSharing} />
 
-      {/* Center: main controls */}
-      <div className="flex items-center gap-2">
-        <ControlButton
-          icon={isAudioMuted ? '🔇' : '🎙️'}
-          label={isAudioMuted ? 'Unmute' : 'Mute'}
-          onClick={onToggleAudio}
-          active={!isAudioMuted}
-          danger={isAudioMuted}
-        />
-        <ControlButton
-          icon={isVideoOff ? '📷' : '📹'}
-          label={isVideoOff ? 'Start video' : 'Stop video'}
-          onClick={onToggleVideo}
-          active={!isVideoOff}
-          danger={isVideoOff}
-        />
-        <ControlButton
-          icon="🖥️"
-          label={isScreenSharing ? 'Stop share' : 'Share'}
-          onClick={onToggleScreenShare}
-          active={isScreenSharing}
-          danger={isScreenSharing}
-        />
-
-        {/* Reactions */}
         <div style={{ position: 'relative' }}>
           <ControlButton icon="😊" label="React" onClick={() => setShowReactions(p => !p)} active={showReactions} />
           {showReactions && (
             <div className="animate-scaleIn" style={{
-              position: 'absolute', bottom: '100%', left: '50%', transform: 'translateX(-50%)',
+              position: 'absolute', bottom: '110%', left: '50%', transform: 'translateX(-50%)',
               background: 'var(--bg-card)', border: '1px solid var(--border)', borderRadius: 12,
-              padding: 10, marginBottom: 8, display: 'flex', flexWrap: 'wrap', gap: 4, width: 180,
+              padding: 10, marginBottom: 6, display: 'flex', flexWrap: 'wrap', gap: 4, width: 176, zIndex: 50,
             }}>
               {REACTIONS.map(e => (
                 <button key={e} onClick={() => { onReaction(e); setShowReactions(false); }} style={{
                   background: 'none', border: 'none', cursor: 'pointer', fontSize: '1.5rem', padding: 4, borderRadius: 6,
-                  transition: 'transform 0.1s',
-                }} className="hover:scale-125">
-                  {e}
-                </button>
+                }}>{e}</button>
               ))}
             </div>
           )}
         </div>
 
-        <ControlButton
-          icon="✋"
-          label={isHandRaised ? 'Lower hand' : 'Raise hand'}
-          onClick={onToggleHand}
-          active={isHandRaised}
-        />
-
-        <ControlButton
-          icon="💬"
-          label="Chat"
-          onClick={onToggleChat}
-          active={isChatOpen}
-        />
+        <ControlButton icon="✋" label={isHandRaised ? 'Lower' : 'Hand'} onClick={onToggleHand} active={isHandRaised} />
+        <ControlButton icon="💬" label="Chat" onClick={onToggleChat} active={activePanel === 'chat'} />
+        <ControlButton icon="👥" label="People" onClick={onToggleParticipants} active={activePanel === 'participants'} badge={participantCount > 1 ? participantCount : null} />
 
         {isHost && (
-          <ControlButton
-            icon={isRecording ? '⏹️' : '🔴'}
-            label={isRecording ? 'Stop rec' : 'Record'}
-            onClick={onToggleRecording}
-            active={isRecording}
-            danger={isRecording}
-          />
+          <ControlButton icon={isRecording ? '⏹️' : '🔴'} label={isRecording ? 'Stop' : 'Record'} onClick={onToggleRecording} active={isRecording} danger={isRecording} />
         )}
 
-        {/* More */}
         <div style={{ position: 'relative' }}>
-          <ControlButton icon="⋯" label="More" onClick={() => setShowMoreControls(p => !p)} active={showMoreControls} />
-          {showMoreControls && (
+          <ControlButton icon="⋯" label="More" onClick={() => setShowMore(p => !p)} active={showMore} />
+          {showMore && (
             <div className="animate-scaleIn" style={{
-              position: 'absolute', bottom: '100%', left: '50%', transform: 'translateX(-50%)',
+              position: 'absolute', bottom: '110%', right: 0,
               background: 'var(--bg-card)', border: '1px solid var(--border)', borderRadius: 12,
-              padding: 8, marginBottom: 8, minWidth: 160, display: 'flex', flexDirection: 'column', gap: 2,
+              padding: 6, marginBottom: 6, minWidth: 160, display: 'flex', flexDirection: 'column', gap: 2, zIndex: 50,
             }}>
-              <button onClick={() => { copyMeetingLink(); setShowMoreControls(false); }} style={{
-                background: 'none', border: 'none', cursor: 'pointer', textAlign: 'left',
-                padding: '8px 12px', borderRadius: 8, fontSize: '0.875rem', color: 'var(--text-primary)',
-                fontFamily: 'DM Sans, sans-serif',
-              }} className="hover:bg-blue-500/10">
+              <button onClick={copyLink} style={{ background: 'none', border: 'none', cursor: 'pointer', textAlign: 'left', padding: '8px 12px', borderRadius: 8, fontSize: '0.8125rem', color: 'var(--text-primary)', fontFamily: 'DM Sans, sans-serif' }}>
                 🔗 Copy meeting link
               </button>
-              <button onClick={() => { navigator.clipboard.writeText(meetingId); setShowMoreControls(false); }} style={{
-                background: 'none', border: 'none', cursor: 'pointer', textAlign: 'left',
-                padding: '8px 12px', borderRadius: 8, fontSize: '0.875rem', color: 'var(--text-primary)',
-                fontFamily: 'DM Sans, sans-serif',
-              }} className="hover:bg-blue-500/10">
+              <button onClick={() => { navigator.clipboard.writeText(meetingId); setShowMore(false); }} style={{ background: 'none', border: 'none', cursor: 'pointer', textAlign: 'left', padding: '8px 12px', borderRadius: 8, fontSize: '0.8125rem', color: 'var(--text-primary)', fontFamily: 'DM Sans, sans-serif' }}>
                 📋 Copy meeting ID
               </button>
             </div>
           )}
         </div>
-      </div>
 
-      {/* Right: leave/end */}
-      <div className="flex items-center gap-2" style={{ minWidth: 180, justifyContent: 'flex-end' }}>
+        <div style={{ width: 1, height: 32, background: 'var(--border)', margin: '0 4px' }} />
+
         {isHost ? (
-          <button className="btn-danger" style={{ fontSize: '0.875rem', padding: '10px 18px' }} onClick={onEndMeeting}>
+          <button onClick={onEndMeeting} style={{ background: 'var(--danger)', color: '#fff', border: 'none', borderRadius: 10, padding: '8px 14px', fontSize: '0.75rem', fontFamily: 'Syne, sans-serif', fontWeight: 700, cursor: 'pointer', whiteSpace: 'nowrap' }}>
             End for all
           </button>
         ) : (
-          <button className="btn-ghost" style={{ fontSize: '0.875rem', color: 'var(--danger)', borderColor: 'var(--danger)' }} onClick={onLeaveMeeting}>
-            Leave meeting
+          <button onClick={onLeaveMeeting} style={{ background: 'transparent', color: 'var(--danger)', border: '1px solid var(--danger)', borderRadius: 10, padding: '8px 14px', fontSize: '0.75rem', fontFamily: 'Syne, sans-serif', fontWeight: 700, cursor: 'pointer', whiteSpace: 'nowrap' }}>
+            Leave
           </button>
         )}
+      </div>
+
+      <div style={{ position: 'absolute', left: 12, top: '50%', transform: 'translateY(-50%)', display: 'flex', alignItems: 'center', gap: 4 }}>
+        {[1,2,3,4].map(i => (
+          <div key={i} style={{
+            width: 3, height: 6 + i * 3, borderRadius: 2,
+            background: (networkQuality?.uplink || 0) <= i || (networkQuality?.uplink || 0) === 0 ? 'var(--success)' : 'var(--border)',
+            opacity: 0.8,
+          }} />
+        ))}
       </div>
     </div>
   );
