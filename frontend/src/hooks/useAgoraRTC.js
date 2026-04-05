@@ -14,6 +14,7 @@ export const useAgoraRTC = () => {
   const [isScreenSharing, setIsScreenSharing] = useState(false);
   const [connectionState, setConnectionState] = useState('DISCONNECTED');
   const [networkQuality, setNetworkQuality] = useState({ uplink: 0, downlink: 0 });
+  const [deviceError, setDeviceError] = useState({ audio: null, video: null });
 
   const getClient = () => {
     if (!clientRef.current) {
@@ -47,7 +48,10 @@ export const useAgoraRTC = () => {
     client.on('connection-state-change', (state) => setConnectionState(state));
 
     client.on('network-quality', (stats) => {
-      setNetworkQuality({ uplink: stats.uplinkNetworkQuality, downlink: stats.downlinkNetworkQuality });
+      setNetworkQuality({
+        uplink: stats.uplinkNetworkQuality,
+        downlink: stats.downlinkNetworkQuality,
+      });
     });
 
     const appId = import.meta.env.VITE_AGORA_APP_ID;
@@ -55,7 +59,9 @@ export const useAgoraRTC = () => {
 
     let audioTrack = null;
     let videoTrack = null;
+    const errors = { audio: null, video: null };
 
+    // Try microphone — independently from camera
     try {
       audioTrack = await AgoraRTC.createMicrophoneAudioTrack({
         encoderConfig: 'high_quality',
@@ -66,9 +72,19 @@ export const useAgoraRTC = () => {
       localTracksRef.current.audio = audioTrack;
       setLocalAudioTrack(audioTrack);
     } catch (err) {
-      console.warn('Microphone access failed:', err.message);
+      console.warn('Microphone access failed:', err.name, err.message);
+      if (err.name === 'NotAllowedError' || err.code === 'PERMISSION_DENIED') {
+        errors.audio = 'Permission denied. Click 🔒 in the address bar → allow Microphone.';
+      } else if (err.name === 'NotFoundError') {
+        errors.audio = 'No microphone found.';
+      } else if (err.name === 'NotReadableError') {
+        errors.audio = 'Microphone is in use by another tab or app.';
+      } else {
+        errors.audio = err.message;
+      }
     }
 
+    // Try camera — independently from microphone
     try {
       videoTrack = await AgoraRTC.createCameraVideoTrack({
         encoderConfig: {
@@ -82,13 +98,27 @@ export const useAgoraRTC = () => {
       localTracksRef.current.video = videoTrack;
       setLocalVideoTrack(videoTrack);
     } catch (err) {
-      console.warn('Camera access failed:', err.message);
+      console.warn('Camera access failed:', err.name, err.message);
+      if (err.name === 'NotAllowedError' || err.code === 'PERMISSION_DENIED') {
+        errors.video = 'Permission denied. Click 🔒 in the address bar → allow Camera.';
+      } else if (err.name === 'NotFoundError') {
+        errors.video = 'No camera found.';
+      } else if (err.name === 'NotReadableError') {
+        errors.video = 'Camera is already in use by another tab. Use two different browsers to test locally.';
+      } else {
+        errors.video = err.message;
+      }
     }
 
-    const tracksToPublish = [audioTrack, videoTrack].filter(Boolean);
-    if (tracksToPublish.length > 0) await client.publish(tracksToPublish);
+    setDeviceError(errors);
 
-    return { audioTrack, videoTrack };
+    // Publish whatever succeeded
+    const tracksToPublish = [audioTrack, videoTrack].filter(Boolean);
+    if (tracksToPublish.length > 0) {
+      await client.publish(tracksToPublish);
+    }
+
+    return { audioTrack, videoTrack, errors };
   }, []);
 
   const leave = useCallback(async () => {
@@ -107,6 +137,7 @@ export const useAgoraRTC = () => {
     setIsVideoOff(false);
     setIsScreenSharing(false);
     setConnectionState('DISCONNECTED');
+    setDeviceError({ audio: null, video: null });
   }, []);
 
   const toggleAudio = useCallback(async () => {
@@ -129,16 +160,26 @@ export const useAgoraRTC = () => {
 
   const startScreenShare = useCallback(async () => {
     const client = clientRef.current;
-    if (!client) return;
+    if (!client) throw new Error('Agora client not initialized');
+
     const screenTrack = await AgoraRTC.createScreenVideoTrack(
       { encoderConfig: { width: 1920, height: 1080, frameRate: 15, bitrateMax: 1500 } },
       'disable'
     );
+
     const videoTrack = localTracksRef.current.video;
-    if (videoTrack) { try { await client.unpublish(videoTrack); } catch {} }
+    if (videoTrack) {
+      try { await client.unpublish(videoTrack); } catch {}
+    }
+
     await client.publish(screenTrack);
     localTracksRef.current.screen = screenTrack;
-    screenTrack.on('track-ended', () => stopScreenShare());
+
+    // Auto-stop when user clicks browser's "Stop sharing" button
+    screenTrack.on('track-ended', async () => {
+      await stopScreenShare();
+    });
+
     setIsScreenSharing(true);
     return screenTrack;
   }, []);
@@ -146,19 +187,40 @@ export const useAgoraRTC = () => {
   const stopScreenShare = useCallback(async () => {
     const client = clientRef.current;
     if (!client) return;
+
     const screenTrack = localTracksRef.current.screen;
     if (screenTrack) {
-      try { await client.unpublish(screenTrack); screenTrack.stop(); screenTrack.close(); } catch {}
+      try {
+        await client.unpublish(screenTrack);
+        screenTrack.stop();
+        screenTrack.close();
+      } catch {}
       localTracksRef.current.screen = null;
     }
+
     const videoTrack = localTracksRef.current.video;
-    if (videoTrack) { try { await client.publish(videoTrack); } catch {} }
+    if (videoTrack) {
+      try { await client.publish(videoTrack); } catch {}
+    }
+
     setIsScreenSharing(false);
   }, []);
 
   return {
-    join, leave, toggleAudio, toggleVideo, startScreenShare, stopScreenShare,
-    localVideoTrack, localAudioTrack, remoteUsers,
-    isAudioMuted, isVideoOff, isScreenSharing, connectionState, networkQuality,
+    join,
+    leave,
+    toggleAudio,
+    toggleVideo,
+    startScreenShare,
+    stopScreenShare,
+    localVideoTrack,
+    localAudioTrack,
+    remoteUsers,
+    isAudioMuted,
+    isVideoOff,
+    isScreenSharing,
+    connectionState,
+    networkQuality,
+    deviceError,
   };
 };

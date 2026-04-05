@@ -1,4 +1,3 @@
-// routes/chat.js
 const express = require('express');
 const router = express.Router();
 const ChatMessage = require('../models/ChatMessage');
@@ -14,11 +13,15 @@ router.get('/:meetingId', async (req, res, next) => {
     if (!meeting) return res.status(404).json({ error: 'Meeting not found' });
 
     const { page = 1, limit = 50 } = req.query;
+    const pageNum = parseInt(page);
+    const limitNum = parseInt(limit);
+
     const query = {
       meeting: meeting._id,
-      isDeleted: false,
+      isDeleted: { $ne: true }, // ✅ FIXED: `false` misses docs where field doesn't exist
       $or: [
         { isPrivate: false },
+        { isPrivate: { $exists: false } }, // ✅ also match old docs without isPrivate field
         { sender: req.user._id },
         { recipient: req.user._id },
       ],
@@ -26,15 +29,17 @@ router.get('/:meetingId', async (req, res, next) => {
 
     const messages = await ChatMessage.find(query)
       .sort({ createdAt: 1 })
-      .skip((page - 1) * limit)
-      .limit(parseInt(limit))
+      .skip((pageNum - 1) * limitNum)
+      .limit(limitNum)
       .populate('sender', 'name avatar')
-      .populate('recipient', 'name');
+      .populate('recipient', 'name')
+      .lean();
 
     const total = await ChatMessage.countDocuments(query);
 
-    res.json({ messages, total, page: parseInt(page) });
+    res.json({ messages, total, page: pageNum });
   } catch (err) {
+    console.error('Chat history error:', err.message); // see actual error in terminal
     next(err);
   }
 });

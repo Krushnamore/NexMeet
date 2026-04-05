@@ -4,11 +4,7 @@ const { v4: uuidv4 } = require('uuid');
 const participantSchema = new mongoose.Schema({
   user: { type: mongoose.Schema.Types.ObjectId, ref: 'User', required: true },
   name: { type: String, required: true },
-  role: {
-    type: String,
-    enum: ['host', 'co-host', 'participant'],
-    default: 'participant',
-  },
+  role: { type: String, enum: ['host', 'co-host', 'participant'], default: 'participant' },
   joinedAt: { type: Date, default: Date.now },
   leftAt: { type: Date, default: null },
   isActive: { type: Boolean, default: true },
@@ -30,7 +26,7 @@ const breakoutRoomSchema = new mongoose.Schema({
 const meetingSchema = new mongoose.Schema({
   meetingId: {
     type: String,
-    unique: true,
+    unique: true, // ← this already creates the index
     default: () => uuidv4().replace(/-/g, '').substring(0, 10).toUpperCase(),
   },
   title: {
@@ -44,15 +40,8 @@ const meetingSchema = new mongoose.Schema({
     trim: true,
     maxlength: [1000, 'Description cannot exceed 1000 characters'],
   },
-  host: {
-    type: mongoose.Schema.Types.ObjectId,
-    ref: 'User',
-    required: true,
-  },
-  coHosts: [{
-    type: mongoose.Schema.Types.ObjectId,
-    ref: 'User',
-  }],
+  host: { type: mongoose.Schema.Types.ObjectId, ref: 'User', required: true },
+  coHosts: [{ type: mongoose.Schema.Types.ObjectId, ref: 'User' }],
   participants: [participantSchema],
   status: {
     type: String,
@@ -70,7 +59,7 @@ const meetingSchema = new mongoose.Schema({
     allowScreenShare: { type: Boolean, default: true },
     allowChat: { type: Boolean, default: true },
     recordMeeting: { type: Boolean, default: false },
-    maxParticipants: { type: Number, default: 0 }, // 0 = unlimited
+    maxParticipants: { type: Number, default: 0 },
     muteOnEntry: { type: Boolean, default: false },
     videoOffOnEntry: { type: Boolean, default: false },
   },
@@ -83,28 +72,16 @@ const meetingSchema = new mongoose.Schema({
     joinedAt: { type: Date, default: Date.now },
   }],
   agoraChannel: { type: String },
-  recordings: [{
-    type: mongoose.Schema.Types.ObjectId,
-    ref: 'Recording',
-  }],
-  chatMessages: [{
-    type: mongoose.Schema.Types.ObjectId,
-    ref: 'ChatMessage',
-  }],
-}, {
-  timestamps: true,
-});
+  recordings: [{ type: mongoose.Schema.Types.ObjectId, ref: 'Recording' }],
+  chatMessages: [{ type: mongoose.Schema.Types.ObjectId, ref: 'ChatMessage' }],
+}, { timestamps: true });
 
-// Pre-save: set agoraChannel to meetingId
 meetingSchema.pre('save', function(next) {
-  if (!this.agoraChannel) {
-    this.agoraChannel = this.meetingId;
-  }
+  if (!this.agoraChannel) this.agoraChannel = this.meetingId;
   next();
 });
 
-// Indexes
-meetingSchema.index({ meetingId: 1 });
+// ✅ FIXED: removed duplicate `meetingId: 1` index (unique:true above already creates it)
 meetingSchema.index({ host: 1 });
 meetingSchema.index({ status: 1 });
 meetingSchema.index({ scheduledAt: 1 });

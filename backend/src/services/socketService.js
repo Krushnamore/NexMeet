@@ -4,10 +4,12 @@ const Meeting = require('../models/Meeting');
 const ChatMessage = require('../models/ChatMessage');
 const logger = require('../utils/logger');
 
-const meetingRooms = new Map();
-const socketUsers = new Map();
+const meetingRooms = new Map(); // meetingId → Set of socketIds
+const socketUsers = new Map();  // socketId → { userId, userName, meetingId }
 
 const setupSocketHandlers = (io) => {
+
+  // ── Auth middleware ──────────────────────────────────────────────────────
   io.use(async (socket, next) => {
     try {
       const token = socket.handshake.auth.token || socket.handshake.query.token;
@@ -17,7 +19,7 @@ const setupSocketHandlers = (io) => {
       if (!user) return next(new Error('User not found'));
       socket.user = user;
       next();
-    } catch (err) {
+    } catch {
       next(new Error('Invalid token'));
     }
   });
@@ -25,55 +27,109 @@ const setupSocketHandlers = (io) => {
   io.on('connection', (socket) => {
     logger.info(`Socket connected: ${socket.id} (${socket.user?.name})`);
 
+    // ── Join meeting room ──────────────────────────────────────────────────
     socket.on('meeting:join', async ({ meetingId }) => {
       try {
         socket.join(meetingId);
         if (!meetingRooms.has(meetingId)) meetingRooms.set(meetingId, new Set());
         meetingRooms.get(meetingId).add(socket.id);
-        socketUsers.set(socket.id, { userId: socket.user._id.toString(), userName: socket.user.name, meetingId });
-        socket.to(meetingId).emit('participant:joined', { userId: socket.user._id, name: socket.user.name, avatar: socket.user.avatar });
-        logger.info(`${socket.user.name} joined meeting ${meetingId}`);
+        socketUsers.set(socket.id, {
+          userId: socket.user._id.toString(),
+          userName: socket.user.name,
+          meetingId,
+        });
+        socket.to(meetingId).emit('participant:joined', {
+          userId: socket.user._id,
+          name: socket.user.name,
+          avatar: socket.user.avatar,
+        });
+        logger.info(`${socket.user.name} joined room ${meetingId}`);
       } catch (err) {
         logger.error('meeting:join error:', err);
-        socket.emit('error', { message: 'Failed to join meeting' });
+        socket.emit('error', { message: 'Failed to join meeting room' });
       }
     });
 
-    socket.on('meeting:leave', ({ meetingId }) => { handleLeave(socket, meetingId, io); });
+    // ── Leave meeting room ─────────────────────────────────────────────────
+    socket.on('meeting:leave', ({ meetingId }) => {
+      handleLeave(socket, meetingId, io);
+    });
 
+    // ── Chat message ───────────────────────────────────────────────────────
+    // EMIT FIRST pattern: message is delivered instantly via socket,
+    // DB save happens async in background — a DB error never blocks delivery.
     socket.on('chat:message', async ({ meetingId, content, recipientId, recipientName, breakoutRoomId }) => {
       try {
-        const meeting = await Meeting.findOne({ meetingId });
-        if (!meeting) return;
+        if (!content || !content.trim()) return;
+
+        const trimmedContent = content.trim();
         const isPrivate = !!recipientId;
-        const message = await ChatMessage.create({
-          meeting: meeting._id, sender: socket.user._id, senderName: socket.user.name,
-          content, isPrivate, recipient: recipientId || null,
-          recipientName: recipientName || null, breakoutRoomId: breakoutRoomId || null,
-        });
+
         const msgData = {
-          _id: message._id, content, senderName: socket.user.name, senderId: socket.user._id,
-          senderAvatar: socket.user.avatar, isPrivate, recipientId, recipientName,
-          breakoutRoomId, timestamp: message.createdAt,
+          _id: `tmp_${Date.now()}_${Math.random().toString(36).slice(2)}`,
+          content: trimmedContent,
+          senderName: socket.user.name,
+          senderId: socket.user._id.toString(),
+          senderAvatar: socket.user.avatar,
+          isPrivate,
+          recipientId: recipientId || null,
+          recipientName: recipientName || null,
+          breakoutRoomId: breakoutRoomId || null,
+          timestamp: new Date().toISOString(),
         };
+
         if (isPrivate) {
+          // Private: send to recipient + echo back to sender
           const recipientSocket = findSocketByUserId(recipientId, meetingId);
           if (recipientSocket) io.to(recipientSocket).emit('chat:message', msgData);
           socket.emit('chat:message', msgData);
         } else {
-          io.to(meetingId).emit('chat:message', msgData);
+          // ✅ socket.to() excludes sender — frontend optimistic add handles sender's own bubble
+          socket.to(meetingId).emit('chat:message', msgData);
         }
-      } catch (err) { logger.error('chat:message error:', err); }
+
+        // Save to DB in background (non-blocking)
+        Meeting.findOne({ meetingId })
+          .then(meeting => {
+            if (!meeting) return;
+            return ChatMessage.create({
+              meeting: meeting._id,
+              sender: socket.user._id,
+              senderName: socket.user.name,
+              content: trimmedContent,
+              isPrivate,
+              recipient: recipientId || null,
+              recipientName: recipientName || null,
+              breakoutRoomId: breakoutRoomId || null,
+            });
+          })
+          .catch(err => logger.error('ChatMessage DB save failed:', err.message));
+
+      } catch (err) {
+        logger.error('chat:message handler error:', err);
+        socket.emit('chat:error', { error: 'Failed to send message' });
+      }
     });
 
+    // ── Hand raise ─────────────────────────────────────────────────────────
     socket.on('hand:raise', ({ meetingId, raised, name }) => {
-      io.to(meetingId).emit('hand:raise', { userId: socket.user._id, name: name || socket.user.name, raised });
+      io.to(meetingId).emit('hand:raise', {
+        userId: socket.user._id,
+        name: name || socket.user.name,
+        raised,
+      });
     });
 
+    // ── Reactions ──────────────────────────────────────────────────────────
     socket.on('reaction', ({ meetingId, emoji }) => {
-      io.to(meetingId).emit('reaction', { userId: socket.user._id, name: socket.user.name, emoji });
+      io.to(meetingId).emit('reaction', {
+        userId: socket.user._id,
+        name: socket.user.name,
+        emoji,
+      });
     });
 
+    // ── Media state ────────────────────────────────────────────────────────
     socket.on('media:audio', ({ meetingId, muted }) => {
       socket.to(meetingId).emit('media:audio', { userId: socket.user._id, muted });
     });
@@ -83,47 +139,75 @@ const setupSocketHandlers = (io) => {
     });
 
     socket.on('media:screenShare', ({ meetingId, sharing }) => {
-      socket.to(meetingId).emit('media:screenShare', { userId: socket.user._id, name: socket.user.name, sharing });
-    });
-
-    socket.on('screenshare:request', ({ meetingId }) => {
-      Meeting.findOne({ meetingId }).then(meeting => {
-        if (!meeting) return;
-        const hostSocket = findSocketByUserId(meeting.host.toString(), meetingId);
-        if (hostSocket) io.to(hostSocket).emit('screenshare:request', { userId: socket.user._id, name: socket.user.name });
+      socket.to(meetingId).emit('media:screenShare', {
+        userId: socket.user._id,
+        name: socket.user.name,
+        sharing,
       });
     });
 
+    // ── Screen share request (participant → host) ──────────────────────────
+    socket.on('screenshare:request', ({ meetingId }) => {
+      Meeting.findOne({ meetingId })
+        .then(meeting => {
+          if (!meeting) return;
+          const hostSocket = findSocketByUserId(meeting.host.toString(), meetingId);
+          if (hostSocket) {
+            io.to(hostSocket).emit('screenshare:request', {
+              userId: socket.user._id.toString(), // ✅ always send as string
+              name: socket.user.name,
+            });
+          }
+        })
+        .catch(err => logger.error('screenshare:request error:', err));
+    });
+
+    // ── Screen share approved (host → participant) ─────────────────────────
     socket.on('screenshare:approved', ({ meetingId, userId }) => {
-      const targetSocket = findSocketByUserId(userId, meetingId);
-      if (targetSocket) io.to(targetSocket).emit('screenshare:approved', { userId });
+      const userIdStr = userId?.toString();
+      const targetSocket = findSocketByUserId(userIdStr, meetingId);
+      logger.info(`screenshare:approved → target userId: ${userIdStr}, socket: ${targetSocket}`);
+      if (targetSocket) {
+        io.to(targetSocket).emit('screenshare:approved', { userId: userIdStr }); // ✅ send as string
+      } else {
+        logger.warn(`screenshare:approved: no socket found for userId ${userIdStr} in room ${meetingId}`);
+      }
     });
 
+    // ── Screen share denied (host → participant) ───────────────────────────
     socket.on('screenshare:denied', ({ meetingId, userId }) => {
-      const targetSocket = findSocketByUserId(userId, meetingId);
-      if (targetSocket) io.to(targetSocket).emit('screenshare:denied', { userId });
+      const userIdStr = userId?.toString();
+      const targetSocket = findSocketByUserId(userIdStr, meetingId);
+      if (targetSocket) {
+        io.to(targetSocket).emit('screenshare:denied', { userId: userIdStr });
+      }
     });
 
+    // ── Host controls ──────────────────────────────────────────────────────
+    socket.on('host:mute', ({ meetingId, targetUserId }) => {
+      const target = findSocketByUserId(targetUserId?.toString(), meetingId);
+      if (target) io.to(target).emit('host:mute');
+    });
+
+    socket.on('host:kick', ({ meetingId, targetUserId }) => {
+      const target = findSocketByUserId(targetUserId?.toString(), meetingId);
+      if (target) io.to(target).emit('host:kicked');
+    });
+
+    // ── Breakout rooms ─────────────────────────────────────────────────────
     socket.on('breakout:assign', ({ meetingId, assignments }) => {
       assignments.forEach(({ userId, roomId }) => {
-        const targetSocket = findSocketByUserId(userId, meetingId);
-        if (targetSocket) io.to(targetSocket).emit('breakout:assigned', { roomId });
+        const target = findSocketByUserId(userId?.toString(), meetingId);
+        if (target) io.to(target).emit('breakout:assigned', { roomId });
       });
       io.to(meetingId).emit('breakout:updated', { assignments });
     });
 
-    socket.on('breakout:end', ({ meetingId }) => { io.to(meetingId).emit('breakout:ended'); });
-
-    socket.on('host:mute', ({ meetingId, targetUserId, muted }) => {
-      const targetSocket = findSocketByUserId(targetUserId, meetingId);
-      if (targetSocket) io.to(targetSocket).emit('host:mute', { muted });
+    socket.on('breakout:end', ({ meetingId }) => {
+      io.to(meetingId).emit('breakout:ended');
     });
 
-    socket.on('host:kick', ({ meetingId, targetUserId }) => {
-      const targetSocket = findSocketByUserId(targetUserId, meetingId);
-      if (targetSocket) io.to(targetSocket).emit('host:kicked');
-    });
-
+    // ── Recording ──────────────────────────────────────────────────────────
     socket.on('recording:started', ({ meetingId }) => {
       socket.to(meetingId).emit('recording:started', { startedBy: socket.user.name });
     });
@@ -132,13 +216,16 @@ const setupSocketHandlers = (io) => {
       socket.to(meetingId).emit('recording:stopped');
     });
 
-    socket.on('disconnect', () => {
+    // ── Disconnect ─────────────────────────────────────────────────────────
+    socket.on('disconnect', (reason) => {
+      logger.info(`Socket disconnected: ${socket.id} (${reason})`);
       const userInfo = socketUsers.get(socket.id);
       if (userInfo) handleLeave(socket, userInfo.meetingId, io);
-      logger.info(`Socket disconnected: ${socket.id}`);
     });
   });
 };
+
+// ── Helpers ──────────────────────────────────────────────────────────────────
 
 function handleLeave(socket, meetingId, io) {
   if (!meetingId) return;
@@ -148,12 +235,20 @@ function handleLeave(socket, meetingId, io) {
     if (meetingRooms.get(meetingId).size === 0) meetingRooms.delete(meetingId);
   }
   socketUsers.delete(socket.id);
-  socket.to(meetingId).emit('participant:left', { userId: socket.user?._id, name: socket.user?.name });
+  socket.to(meetingId).emit('participant:left', {
+    userId: socket.user?._id,
+    name: socket.user?.name,
+  });
+  logger.info(`${socket.user?.name} left room ${meetingId}`);
 }
 
 function findSocketByUserId(userId, meetingId) {
+  if (!userId) return null;
+  const userIdStr = userId.toString();
   for (const [socketId, info] of socketUsers.entries()) {
-    if (info.userId === userId.toString() && info.meetingId === meetingId) return socketId;
+    if (info.userId === userIdStr && info.meetingId === meetingId) {
+      return socketId;
+    }
   }
   return null;
 }
