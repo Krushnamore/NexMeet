@@ -1,9 +1,8 @@
-import React from 'react';
 import ReactDOM from 'react-dom/client';
 import { BrowserRouter, Routes, Route, Navigate } from 'react-router-dom';
 import { Toaster } from 'react-hot-toast';
 import './index.css';
-import './mobile.css'; // ← ADDED
+import './mobile.css';
 
 import { AuthProvider, useAuth } from './contexts/AuthContext';
 import { SocketProvider } from './contexts/SocketContext';
@@ -18,9 +17,9 @@ import JoinMeeting from './components/Meeting/JoinMeeting';
 const PrivateRoute = ({ children }) => {
   const { user, loading } = useAuth();
   if (loading) return (
-    <div className="flex items-center justify-center min-h-screen" style={{ background: 'var(--bg-primary)' }}>
-      <div className="flex flex-col items-center gap-4">
-        <div className="w-10 h-10 rounded-full border-2 border-t-transparent animate-spin" style={{ borderColor: 'var(--accent)', borderTopColor: 'transparent' }} />
+    <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', minHeight: '100vh', background: 'var(--bg-primary)' }}>
+      <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 16 }}>
+        <div style={{ width: 40, height: 40, borderRadius: '50%', border: '3px solid var(--accent)', borderTopColor: 'transparent', animation: 'spin 0.8s linear infinite' }} />
         <p style={{ color: 'var(--text-muted)', fontFamily: 'Syne, sans-serif' }}>Loading NexMeet…</p>
       </div>
     </div>
@@ -52,7 +51,6 @@ function App() {
         <Toaster
           position="top-right"
           toastOptions={{
-            className: 'toast-dark',
             duration: 4000,
             style: {
               background: 'var(--bg-card)',
@@ -68,8 +66,5 @@ function App() {
   );
 }
 
-ReactDOM.createRoot(document.getElementById('root')).render(
-  <React.StrictMode>
-    <App />
-  </React.StrictMode>
-);
+// ✅ No React.StrictMode — it causes Agora double-join error
+ReactDOM.createRoot(document.getElementById('root')).render(<App />);

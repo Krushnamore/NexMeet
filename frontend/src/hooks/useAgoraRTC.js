@@ -1,11 +1,12 @@
 import { useState, useRef, useCallback } from 'react';
 import AgoraRTC from 'agora-rtc-sdk-ng';
 
-AgoraRTC.setLogLevel(4);
+AgoraRTC.setLogLevel(3);
 
 export const useAgoraRTC = () => {
   const clientRef = useRef(null);
   const localTracksRef = useRef({ audio: null, video: null, screen: null });
+  const joinedRef = useRef(false); // ✅ prevent double-join
   const [localAudioTrack, setLocalAudioTrack] = useState(null);
   const [localVideoTrack, setLocalVideoTrack] = useState(null);
   const [remoteUsers, setRemoteUsers] = useState([]);
@@ -24,30 +25,61 @@ export const useAgoraRTC = () => {
   };
 
   const join = useCallback(async ({ channelName, uid }) => {
+    // ✅ Prevent double join (React StrictMode or effect re-run)
+    if (joinedRef.current) {
+      console.warn('Agora join already in progress or completed, skipping');
+      return { audioTrack: localTracksRef.current.audio, videoTrack: localTracksRef.current.video, errors: {} };
+    }
+    joinedRef.current = true;
+
     const client = getClient();
 
     client.on('user-published', async (user, mediaType) => {
-      await client.subscribe(user, mediaType);
-      if (mediaType === 'audio') {
-        user.audioTrack?.play();
+      try {
+        await client.subscribe(user, mediaType);
+        if (mediaType === 'audio' && user.audioTrack) {
+          user.audioTrack.play();
+        }
+        setRemoteUsers(prev => {
+          const others = prev.filter(u => u.uid !== user.uid);
+          return [...others, {
+            uid: user.uid,
+            videoTrack: user.videoTrack,
+            audioTrack: user.audioTrack,
+            hasVideo: user.hasVideo,
+            hasAudio: user.hasAudio,
+            _ts: Date.now(),
+          }];
+        });
+      } catch (err) {
+        console.error('Subscribe error:', err);
       }
-      setRemoteUsers(prev => {
-        const exists = prev.find(u => u.uid === user.uid);
-        if (exists) return prev.map(u => u.uid === user.uid ? { ...u, ...user } : u);
-        return [...prev, user];
-      });
     });
 
     client.on('user-unpublished', (user, mediaType) => {
-      if (mediaType === 'audio') user.audioTrack?.stop();
-      setRemoteUsers(prev => prev.map(u => u.uid === user.uid ? { ...u, ...user } : u));
+      if (mediaType === 'audio' && user.audioTrack) {
+        try { user.audioTrack.stop(); } catch {}
+      }
+      setRemoteUsers(prev => {
+        const others = prev.filter(u => u.uid !== user.uid);
+        return [...others, {
+          uid: user.uid,
+          videoTrack: user.videoTrack,
+          audioTrack: user.audioTrack,
+          hasVideo: user.hasVideo,
+          hasAudio: user.hasAudio,
+          _ts: Date.now(),
+        }];
+      });
     });
 
     client.on('user-left', (user) => {
       setRemoteUsers(prev => prev.filter(u => u.uid !== user.uid));
     });
 
-    client.on('connection-state-change', (state) => setConnectionState(state));
+    client.on('connection-state-change', (state) => {
+      setConnectionState(state);
+    });
 
     client.on('network-quality', (stats) => {
       setNetworkQuality({
@@ -56,13 +88,37 @@ export const useAgoraRTC = () => {
       });
     });
 
-    const appId = import.meta.env.VITE_AGORA_APP_ID;
-    await client.join(appId, channelName, null, uid);
+    // ✅ Get App ID from env or backend
+    let appId = import.meta.env.VITE_AGORA_APP_ID;
+    if (!appId || appId.trim() === '') {
+      try {
+        const res = await fetch(
+          `${import.meta.env.VITE_API_URL || 'http://localhost:5000/api'}/agora/app-id`,
+          { headers: { Authorization: `Bearer ${localStorage.getItem('accessToken')}` } }
+        );
+        const data = await res.json();
+        appId = data.appId;
+      } catch (err) {
+        joinedRef.current = false;
+        throw new Error('Agora App ID missing. Check VITE_AGORA_APP_ID in frontend .env');
+      }
+    }
+
+    console.log('Joining Agora channel:', channelName, '| uid:', uid, '| appId:', appId?.slice(0, 8) + '...');
+
+    try {
+      await client.join(appId, channelName, null, uid);
+      console.log('✅ Agora channel joined successfully');
+    } catch (err) {
+      joinedRef.current = false;
+      throw err;
+    }
 
     let audioTrack = null;
     let videoTrack = null;
     const errors = { audio: null, video: null };
 
+    // ✅ Try microphone
     try {
       audioTrack = await AgoraRTC.createMicrophoneAudioTrack({
         encoderConfig: 'high_quality',
@@ -72,19 +128,21 @@ export const useAgoraRTC = () => {
       });
       localTracksRef.current.audio = audioTrack;
       setLocalAudioTrack(audioTrack);
+      console.log('✅ Microphone ready');
     } catch (err) {
-      console.warn('Microphone access failed:', err.name, err.message);
+      console.warn('❌ Mic error:', err.name, err.message);
       if (err.name === 'NotAllowedError') {
-        errors.audio = 'Mic permission denied. Click the 🔒 icon in browser address bar → allow Microphone.';
+        errors.audio = 'Mic blocked. Click 🔒 in address bar → allow Microphone → refresh.';
       } else if (err.name === 'NotFoundError') {
         errors.audio = 'No microphone found on this device.';
       } else if (err.name === 'NotReadableError') {
-        errors.audio = 'Microphone is in use by another app or tab.';
+        errors.audio = 'Mic busy. Close other apps using it and refresh.';
       } else {
-        errors.audio = err.message;
+        errors.audio = `Mic error: ${err.message}`;
       }
     }
 
+    // ✅ Try camera
     try {
       videoTrack = await AgoraRTC.createCameraVideoTrack({
         encoderConfig: {
@@ -97,24 +155,29 @@ export const useAgoraRTC = () => {
       });
       localTracksRef.current.video = videoTrack;
       setLocalVideoTrack(videoTrack);
+      console.log('✅ Camera ready');
     } catch (err) {
-      console.warn('Camera access failed:', err.name, err.message);
+      console.warn('❌ Camera error:', err.name, err.message);
       if (err.name === 'NotAllowedError') {
-        errors.video = 'Camera permission denied. Click the 🔒 icon in browser address bar → allow Camera.';
+        errors.video = 'Camera blocked. Click 🔒 in address bar → allow Camera → refresh.';
       } else if (err.name === 'NotFoundError') {
-        errors.video = 'No camera found on this device.';
+        errors.video = 'No camera found.';
       } else if (err.name === 'NotReadableError') {
-        errors.video = 'Camera is in use by another app or tab. Try a different browser.';
+        errors.video = 'Camera busy. Another tab is using it. Use Edge/Firefox for the second participant.';
       } else {
-        errors.video = err.message;
+        errors.video = `Camera error: ${err.message}`;
       }
     }
 
     setDeviceError(errors);
 
+    // ✅ Publish tracks
     const tracksToPublish = [audioTrack, videoTrack].filter(Boolean);
     if (tracksToPublish.length > 0) {
       await client.publish(tracksToPublish);
+      console.log('✅ Published', tracksToPublish.length, 'track(s)');
+    } else {
+      console.warn('⚠️ No tracks published — listen-only mode');
     }
 
     return { audioTrack, videoTrack, errors };
@@ -123,12 +186,16 @@ export const useAgoraRTC = () => {
   const leave = useCallback(async () => {
     const client = clientRef.current;
     if (!client) return;
+
     Object.values(localTracksRef.current).forEach(track => {
       if (track) { try { track.stop(); track.close(); } catch {} }
     });
     localTracksRef.current = { audio: null, video: null, screen: null };
+
     try { await client.leave(); } catch {}
     clientRef.current = null;
+    joinedRef.current = false;
+
     setLocalAudioTrack(null);
     setLocalVideoTrack(null);
     setRemoteUsers([]);

@@ -45,10 +45,16 @@
 
   ::-webkit-scrollbar { width: 6px; height: 6px; }
   ::-webkit-scrollbar-track { background: var(--bg-primary); }
-  ::-webkit-scrollbar-thumb { background: var(--border-light); border-radius: 3px; }
+  ::-webkit-scrollbar-thumb {
+    background: var(--border-light);
+    border-radius: 3px;
+  }
   ::-webkit-scrollbar-thumb:hover { background: var(--text-muted); }
 
-  ::selection { background: var(--accent-glow); color: var(--text-primary); }
+  ::selection {
+    background: var(--accent-glow);
+    color: var(--text-primary);
+  }
 }
 
 @layer components {
@@ -64,7 +70,12 @@
     transform: translateY(-1px);
   }
   .btn-primary:active { transform: translateY(0); }
-  .btn-primary:disabled { opacity: 0.5; cursor: not-allowed; transform: none; }
+  .btn-primary:disabled {
+    opacity: 0.5;
+    cursor: not-allowed;
+    transform: none;
+    box-shadow: none;
+  }
 
   .btn-ghost {
     @apply flex items-center justify-center gap-2 px-4 py-2.5 rounded-xl font-medium text-sm transition-all duration-200;
@@ -82,8 +93,12 @@
     @apply flex items-center justify-center gap-2 px-5 py-2.5 rounded-xl font-medium text-sm transition-all duration-200;
     background: var(--danger);
     color: #fff;
+    border: none;
   }
-  .btn-danger:hover { background: var(--danger-hover); transform: translateY(-1px); }
+  .btn-danger:hover {
+    background: var(--danger-hover);
+    transform: translateY(-1px);
+  }
 
   .card {
     background: var(--bg-card);
@@ -111,31 +126,6 @@
     letter-spacing: 0.05em;
     text-transform: uppercase;
   }
-
-  .control-btn {
-    @apply flex flex-col items-center justify-center gap-1 p-3 rounded-xl transition-all duration-200 cursor-pointer select-none;
-    background: var(--bg-card);
-    border: 1px solid var(--border);
-    color: var(--text-secondary);
-    min-width: 60px;
-  }
-  .control-btn:hover {
-    background: var(--bg-hover);
-    border-color: var(--border-light);
-    color: var(--text-primary);
-  }
-  .control-btn.active {
-    background: var(--accent);
-    border-color: var(--accent);
-    color: #fff;
-    box-shadow: 0 0 16px var(--accent-glow);
-  }
-  .control-btn.danger {
-    background: var(--danger);
-    border-color: var(--danger);
-    color: #fff;
-  }
-  .control-btn.danger:hover { background: var(--danger-hover); }
 
   .panel {
     background: var(--bg-secondary);
@@ -167,8 +157,6 @@
     aspect-ratio: 16/9;
   }
 
-  .video-tile:hover { border-color: var(--border-light); }
-
   .avatar {
     @apply flex items-center justify-center rounded-full font-semibold text-white uppercase;
     background: linear-gradient(135deg, var(--accent), var(--purple));
@@ -197,10 +185,6 @@
     background-clip: text;
   }
 
-  .bg-noise {
-    background-image: url("data:image/svg+xml,%3Csvg viewBox='0 0 256 256' xmlns='http://www.w3.org/2000/svg'%3E%3Cfilter id='noise'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.9' numOctaves='4' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23noise)' opacity='0.03'/%3E%3C/svg%3E");
-  }
-
   .glass {
     background: rgba(13, 20, 32, 0.8);
     backdrop-filter: blur(20px);
@@ -214,7 +198,7 @@
   .animate-scaleIn { animation: scaleIn 0.2s ease-out; }
 }
 
-/* Animations */
+/* ── Animations ─────────────────────────────────────────────── */
 @keyframes fadeIn {
   from { opacity: 0; }
   to { opacity: 1; }
@@ -240,31 +224,13 @@
   50% { opacity: 0.6; box-shadow: 0 0 14px var(--success); }
 }
 
+@keyframes spin {
+  to { transform: rotate(360deg); }
+}
+
 @keyframes recording-pulse {
   0%, 100% { opacity: 1; }
   50% { opacity: 0.4; }
-}
-
-.recording-indicator { animation: recording-pulse 1.5s ease-in-out infinite; }
-
-/* Video grid layouts */
-.video-grid-1 { grid-template-columns: 1fr; }
-.video-grid-2 { grid-template-columns: repeat(2, 1fr); }
-.video-grid-3 { grid-template-columns: repeat(2, 1fr); }
-.video-grid-4 { grid-template-columns: repeat(2, 1fr); }
-.video-grid-many { grid-template-columns: repeat(3, 1fr); }
-
-@media (max-width: 768px) {
-  .video-grid-2,
-  .video-grid-3,
-  .video-grid-4,
-  .video-grid-many { grid-template-columns: 1fr; }
-}
-
-/* Custom reaction animations */
-.reaction-float {
-  animation: reactionFloat 2s ease-out forwards;
-  pointer-events: none;
 }
 
 @keyframes reactionFloat {
@@ -272,9 +238,107 @@
   100% { opacity: 0; transform: translateY(-100px) scale(1.5); }
 }
 
-/* Toast customization */
+.recording-indicator {
+  animation: recording-pulse 1.5s ease-in-out infinite;
+}
+
+.reaction-float {
+  animation: reactionFloat 2s ease-out forwards;
+  pointer-events: none;
+}
+
+/* ── Video grid ──────────────────────────────────────────────── */
+.video-grid-1 { grid-template-columns: 1fr; }
+.video-grid-2 { grid-template-columns: repeat(2, 1fr); }
+.video-grid-4 { grid-template-columns: repeat(2, 1fr); }
+.video-grid-many { grid-template-columns: repeat(3, 1fr); }
+
+/* ── Agora video fix ─────────────────────────────────────────── */
+
+/* Agora injects a div with this class — force it to fill container */
+.agora_video_player {
+  width: 100% !important;
+  height: 100% !important;
+  position: absolute !important;
+  top: 0 !important;
+  left: 0 !important;
+  object-fit: cover !important;
+}
+
+/* All video elements fill their container */
+video {
+  width: 100% !important;
+  height: 100% !important;
+  object-fit: cover !important;
+  display: block !important;
+  position: absolute !important;
+  top: 0 !important;
+  left: 0 !important;
+}
+
+/* Agora root container */
+div[id^="agora-video-player"] {
+  width: 100% !important;
+  height: 100% !important;
+  position: absolute !important;
+  top: 0 !important;
+  left: 0 !important;
+}
+
+/* ── Toast ───────────────────────────────────────────────────── */
 .toast-dark {
   background: var(--bg-card) !important;
   color: var(--text-primary) !important;
   border: 1px solid var(--border) !important;
+}
+
+/* ── Mobile ──────────────────────────────────────────────────── */
+@media (max-width: 768px) {
+  .video-grid-1,
+  .video-grid-2,
+  .video-grid-4,
+  .video-grid-many {
+    grid-template-columns: 1fr !important;
+  }
+}
+
+@media (max-width: 768px) and (orientation: landscape) {
+  .video-grid-2,
+  .video-grid-4 {
+    grid-template-columns: repeat(2, 1fr) !important;
+  }
+}
+
+/* Safe area iOS */
+@supports (padding: max(0px)) {
+  .controls-bottom {
+    padding-bottom: max(8px, env(safe-area-inset-bottom));
+  }
+}
+
+@media (max-width: 768px) {
+  button { min-height: 36px; }
+}
+
+/* No tap highlight on mobile */
+button {
+  -webkit-user-select: none;
+  user-select: none;
+  -webkit-tap-highlight-color: transparent;
+}
+
+button:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+
+input:focus-visible,
+textarea:focus-visible {
+  outline: none;
+}
+
+/* Fix 100vh mobile browsers */
+.full-height {
+  height: 100vh;
+  height: 100dvh;
 }
