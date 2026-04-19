@@ -1,14 +1,19 @@
 import { useState, useEffect, useCallback } from 'react';
-import { useNavigate, Link } from 'react-router-dom';
+import { useNavigate } from 'react-router-dom';
 import { toast } from 'react-hot-toast';
 import { useAuth } from '../../contexts/AuthContext';
 import api from '../../services/api';
 import { formatDistanceToNow, format } from 'date-fns';
 
-const Avatar = ({ name, size = 36, className = '' }) => {
+const Avatar = ({ name, size = 36 }) => {
   const initials = name?.split(' ').map(n => n[0]).join('').toUpperCase().slice(0, 2) || '?';
   return (
-    <div className={`avatar ${className}`} style={{ width: size, height: size, fontSize: size * 0.35 }}>
+    <div style={{
+      width: size, height: size, borderRadius: 10, flexShrink: 0,
+      background: 'linear-gradient(135deg, #3b82f6, #8b5cf6)',
+      display: 'flex', alignItems: 'center', justifyContent: 'center',
+      fontSize: size * 0.35, fontWeight: 700, color: '#fff', fontFamily: 'Syne, sans-serif',
+    }}>
       {initials}
     </div>
   );
@@ -19,32 +24,30 @@ const StatusBadge = ({ status }) => {
   return <span className={`badge ${map[status] || 'badge-blue'}`}>{status}</span>;
 };
 
-const MeetingCard = ({ meeting, onJoin, onEnd }) => (
-  <div className="card p-5 hover:border-blue-500/20 transition-all duration-200 animate-fadeIn">
-    <div className="flex items-start justify-between gap-3 mb-3">
-      <div className="flex-1 min-w-0">
-        <h3 style={{ fontFamily: 'Syne, sans-serif', fontSize: '0.9375rem', fontWeight: 600, color: 'var(--text-primary)', marginBottom: 4 }} className="truncate">
+const MeetingCard = ({ meeting, onJoin }) => (
+  <div className="card animate-fadeIn" style={{ padding: '16px 18px', marginBottom: 10 }}>
+    <div style={{ display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', gap: 10, marginBottom: 8 }}>
+      <div style={{ flex: 1, minWidth: 0 }}>
+        <h3 style={{ fontFamily: 'Syne, sans-serif', fontSize: '0.9375rem', fontWeight: 600, color: 'var(--text-primary)', marginBottom: 4, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
           {meeting.title}
         </h3>
-        <div className="flex items-center gap-2 flex-wrap">
+        <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
           <StatusBadge status={meeting.status} />
-          <span style={{ color: 'var(--text-muted)', fontSize: '0.8rem' }}>
-            ID: {meeting.meetingId}
-          </span>
+          <span style={{ color: 'var(--text-muted)', fontSize: '0.75rem' }}>ID: {meeting.meetingId}</span>
         </div>
       </div>
-      <div className="flex gap-2 flex-shrink-0">
-        {meeting.status !== 'ended' && (
-          <button className="btn-primary text-xs px-3 py-1.5" onClick={() => onJoin(meeting.meetingId)}>
-            Join
-          </button>
-        )}
-      </div>
+      {meeting.status !== 'ended' && (
+        <button className="btn-primary" style={{ fontSize: '0.8rem', padding: '6px 14px', flexShrink: 0 }}
+          onClick={() => onJoin(meeting.meetingId)}>
+          Join
+        </button>
+      )}
     </div>
-    <div className="flex items-center gap-4" style={{ fontSize: '0.8rem', color: 'var(--text-muted)' }}>
-      <span>👤 {meeting.host?.name || 'Unknown'}</span>
-      <span>👥 {meeting.participants?.filter(p => p.isActive).length || 0} active</span>
-      <span>🕐 {formatDistanceToNow(new Date(meeting.createdAt), { addSuffix: true })}</span>
+    <div style={{ display: 'flex', gap: 12, flexWrap: 'wrap' }}>
+      <span style={{ color: 'var(--text-muted)', fontSize: '0.75rem' }}>👤 {meeting.host?.name}</span>
+      <span style={{ color: 'var(--text-muted)', fontSize: '0.75rem' }}>
+        🕐 {formatDistanceToNow(new Date(meeting.createdAt), { addSuffix: true })}
+      </span>
     </div>
   </div>
 );
@@ -54,21 +57,30 @@ export default function Dashboard() {
   const navigate = useNavigate();
   const [meetings, setMeetings] = useState([]);
   const [loading, setLoading] = useState(true);
-  const [creating, setCreating] = useState(false);
   const [joinCode, setJoinCode] = useState('');
   const [newMeeting, setNewMeeting] = useState({ title: '', scheduledAt: '' });
   const [showCreate, setShowCreate] = useState(false);
+  const [creating, setCreating] = useState(false);
   const [tab, setTab] = useState('upcoming');
+  const [sidebarOpen, setSidebarOpen] = useState(false);
+  const [isMobile, setIsMobile] = useState(window.innerWidth < 768);
+
+  useEffect(() => {
+    const handleResize = () => {
+      const mobile = window.innerWidth < 768;
+      setIsMobile(mobile);
+      if (!mobile) setSidebarOpen(false);
+    };
+    window.addEventListener('resize', handleResize);
+    return () => window.removeEventListener('resize', handleResize);
+  }, []);
 
   const fetchMeetings = useCallback(async () => {
     try {
       const res = await api.get('/meetings');
       setMeetings(res.data.meetings);
-    } catch (err) {
-      toast.error('Failed to load meetings');
-    } finally {
-      setLoading(false);
-    }
+    } catch { toast.error('Failed to load meetings'); }
+    finally { setLoading(false); }
   }, []);
 
   useEffect(() => { fetchMeetings(); }, [fetchMeetings]);
@@ -78,20 +90,14 @@ export default function Dashboard() {
     if (!newMeeting.title.trim()) return toast.error('Meeting title required');
     setCreating(true);
     try {
-      const res = await api.post('/meetings', {
-        title: newMeeting.title,
-        scheduledAt: newMeeting.scheduledAt || null,
-      });
-      const meeting = res.data.meeting;
+      const res = await api.post('/meetings', { title: newMeeting.title, scheduledAt: newMeeting.scheduledAt || null });
       toast.success('Meeting created!');
       setShowCreate(false);
       setNewMeeting({ title: '', scheduledAt: '' });
-      navigate(`/meeting/${meeting.meetingId}`);
+      navigate(`/meeting/${res.data.meeting.meetingId}`);
     } catch (err) {
       toast.error(err.response?.data?.error || 'Failed to create meeting');
-    } finally {
-      setCreating(false);
-    }
+    } finally { setCreating(false); }
   };
 
   const joinMeeting = () => {
@@ -100,10 +106,7 @@ export default function Dashboard() {
     navigate(`/meeting/${code}`);
   };
 
-  const handleLogout = async () => {
-    await logout();
-    navigate('/');
-  };
+  const handleLogout = async () => { await logout(); navigate('/'); };
 
   const filteredMeetings = meetings.filter(m => {
     if (tab === 'upcoming') return m.status !== 'ended' && m.status !== 'cancelled';
@@ -111,101 +114,149 @@ export default function Dashboard() {
     return true;
   });
 
-  return (
-    <div style={{ minHeight: '100vh', background: 'var(--bg-primary)', display: 'flex' }}>
-      {/* Sidebar */}
-      <aside style={{ width: 240, background: 'var(--bg-secondary)', borderRight: '1px solid var(--border)', display: 'flex', flexDirection: 'column', padding: '1.5rem 1rem', flexShrink: 0 }}>
-        <div className="flex items-center gap-2 mb-8 px-2">
+  const SidebarContent = () => (
+    <div style={{ display: 'flex', flexDirection: 'column', height: '100%' }}>
+      {/* Logo */}
+      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '20px 16px 16px', borderBottom: '1px solid var(--border)' }}>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
           <div style={{ width: 32, height: 32, background: 'linear-gradient(135deg, #3b82f6, #8b5cf6)', borderRadius: 8, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
             <span style={{ fontSize: 16 }}>⬡</span>
           </div>
           <span style={{ fontFamily: 'Syne, sans-serif', fontWeight: 800, fontSize: '1.1rem', color: 'var(--text-primary)' }}>NexMeet</span>
         </div>
+        {isMobile && (
+          <button onClick={() => setSidebarOpen(false)} style={{ background: 'none', border: 'none', cursor: 'pointer', color: 'var(--text-muted)', fontSize: '1.5rem', lineHeight: 1 }}>×</button>
+        )}
+      </div>
 
-        <nav className="flex flex-col gap-1 flex-1">
-          <button className="sidebar-nav-item active" style={{ border: 'none', textAlign: 'left', width: '100%' }}>
-            <span>🏠</span> Dashboard
-          </button>
-          <button className="sidebar-nav-item" style={{ border: 'none', textAlign: 'left', width: '100%' }}
-            onClick={() => setShowCreate(true)}>
-            <span>➕</span> New Meeting
-          </button>
-          <button className="sidebar-nav-item" style={{ border: 'none', textAlign: 'left', width: '100%' }}
-            onClick={() => navigate('/join')}>
-            <span>🔗</span> Join Meeting
-          </button>
-        </nav>
+      {/* Nav */}
+      <nav style={{ flex: 1, padding: '12px 8px', display: 'flex', flexDirection: 'column', gap: 2 }}>
+        <button className="sidebar-nav-item active" style={{ border: 'none', width: '100%', textAlign: 'left' }}>
+          🏠 Dashboard
+        </button>
+        <button className="sidebar-nav-item" style={{ border: 'none', width: '100%', textAlign: 'left' }}
+          onClick={() => { setShowCreate(true); setSidebarOpen(false); }}>
+          ➕ New Meeting
+        </button>
+        <button className="sidebar-nav-item" style={{ border: 'none', width: '100%', textAlign: 'left' }}
+          onClick={() => { navigate('/join'); setSidebarOpen(false); }}>
+          🔗 Join Meeting
+        </button>
+      </nav>
 
-        {/* User profile */}
-        <div style={{ borderTop: '1px solid var(--border)', paddingTop: '1rem', marginTop: 'auto' }}>
-          <div className="flex items-center gap-3 px-2">
-            <Avatar name={user?.name} size={34} />
-            <div className="flex-1 min-w-0">
-              <p style={{ fontFamily: 'Syne, sans-serif', fontSize: '0.875rem', fontWeight: 600, color: 'var(--text-primary)' }} className="truncate">{user?.name}</p>
-              <p style={{ fontSize: '0.75rem', color: 'var(--text-muted)' }} className="truncate">{user?.email}</p>
-            </div>
+      {/* User profile */}
+      <div style={{ borderTop: '1px solid var(--border)', padding: '12px 8px' }}>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '8px 12px' }}>
+          <Avatar name={user?.name} size={34} />
+          <div style={{ flex: 1, minWidth: 0 }}>
+            <p style={{ fontFamily: 'Syne, sans-serif', fontSize: '0.875rem', fontWeight: 600, color: 'var(--text-primary)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{user?.name}</p>
+            <p style={{ fontSize: '0.72rem', color: 'var(--text-muted)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{user?.email}</p>
           </div>
-          <button className="sidebar-nav-item w-full mt-2" style={{ border: 'none', textAlign: 'left', color: 'var(--danger)', fontSize: '0.875rem' }}
-            onClick={handleLogout}>
-            <span>🚪</span> Sign out
-          </button>
         </div>
-      </aside>
+        <button className="sidebar-nav-item" style={{ border: 'none', width: '100%', textAlign: 'left', color: 'var(--danger)' }} onClick={handleLogout}>
+          🚪 Sign out
+        </button>
+      </div>
+    </div>
+  );
 
-      {/* Main */}
-      <main style={{ flex: 1, overflow: 'auto', padding: '2rem' }}>
-        <div style={{ maxWidth: 900, margin: '0 auto' }}>
+  return (
+    <div style={{ minHeight: '100vh', background: 'var(--bg-primary)', display: 'flex' }}>
+
+      {/* ── Desktop Sidebar ── */}
+      {!isMobile && (
+        <aside style={{ width: 240, background: 'var(--bg-secondary)', borderRight: '1px solid var(--border)', flexShrink: 0, height: '100vh', position: 'sticky', top: 0, overflow: 'auto' }}>
+          <SidebarContent />
+        </aside>
+      )}
+
+      {/* ── Mobile Sidebar Overlay ── */}
+      {isMobile && sidebarOpen && (
+        <>
+          {/* Backdrop */}
+          <div onClick={() => setSidebarOpen(false)} style={{ position: 'fixed', inset: 0, zIndex: 40, background: 'rgba(0,0,0,0.6)', backdropFilter: 'blur(4px)' }} />
+          {/* Drawer */}
+          <div style={{ position: 'fixed', left: 0, top: 0, bottom: 0, width: 260, zIndex: 50, background: 'var(--bg-secondary)', borderRight: '1px solid var(--border)', overflow: 'auto', animation: 'slideRight 0.25s ease-out' }}>
+            <SidebarContent />
+          </div>
+        </>
+      )}
+
+      {/* ── Main content ── */}
+      <main style={{ flex: 1, overflow: 'auto', minWidth: 0 }}>
+
+        {/* Mobile top bar */}
+        {isMobile && (
+          <div style={{ background: 'var(--bg-secondary)', borderBottom: '1px solid var(--border)', padding: '12px 16px', display: 'flex', alignItems: 'center', justifyContent: 'space-between', position: 'sticky', top: 0, zIndex: 30 }}>
+            <button onClick={() => setSidebarOpen(true)} style={{ background: 'none', border: 'none', cursor: 'pointer', color: 'var(--text-primary)', fontSize: '1.5rem', lineHeight: 1, padding: 4 }}>
+              ☰
+            </button>
+            <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+              <div style={{ width: 28, height: 28, background: 'linear-gradient(135deg, #3b82f6, #8b5cf6)', borderRadius: 7, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+                <span style={{ fontSize: 14 }}>⬡</span>
+              </div>
+              <span style={{ fontFamily: 'Syne, sans-serif', fontWeight: 800, fontSize: '1.1rem', color: 'var(--text-primary)' }}>NexMeet</span>
+            </div>
+            <button className="btn-primary" style={{ fontSize: '0.75rem', padding: '6px 12px' }} onClick={() => setShowCreate(true)}>+ New</button>
+          </div>
+        )}
+
+        <div style={{ maxWidth: 860, margin: '0 auto', padding: isMobile ? '16px' : '32px 24px' }}>
+
           {/* Header */}
-          <div className="flex items-center justify-between mb-8">
+          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 24, flexWrap: 'wrap', gap: 12 }}>
             <div>
-              <h1 style={{ fontFamily: 'Syne, sans-serif', fontSize: '1.75rem', fontWeight: 700, color: 'var(--text-primary)', marginBottom: 4 }}>
+              <h1 style={{ fontFamily: 'Syne, sans-serif', fontSize: isMobile ? '1.375rem' : '1.75rem', fontWeight: 700, color: 'var(--text-primary)', marginBottom: 4 }}>
                 Good {new Date().getHours() < 12 ? 'morning' : new Date().getHours() < 18 ? 'afternoon' : 'evening'}, {user?.name?.split(' ')[0]} 👋
               </h1>
-              <p style={{ color: 'var(--text-secondary)', fontSize: '0.9rem' }}>
+              <p style={{ color: 'var(--text-secondary)', fontSize: '0.875rem' }}>
                 {format(new Date(), 'EEEE, MMMM do yyyy')}
               </p>
             </div>
-            <button className="btn-primary" onClick={() => setShowCreate(true)}>
-              + New meeting
-            </button>
+            {!isMobile && (
+              <button className="btn-primary" onClick={() => setShowCreate(true)}>+ New meeting</button>
+            )}
           </div>
 
           {/* Quick actions */}
-          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(200px, 1fr))', gap: '1rem', marginBottom: '2rem' }}>
-            <div className="card p-5 cursor-pointer hover:border-blue-500/30 transition-all" onClick={() => setShowCreate(true)}>
-              <div style={{ fontSize: '1.75rem', marginBottom: 8 }}>🎬</div>
-              <h3 style={{ fontFamily: 'Syne, sans-serif', fontSize: '0.9375rem', fontWeight: 600, color: 'var(--text-primary)', marginBottom: 2 }}>New Meeting</h3>
-              <p style={{ color: 'var(--text-secondary)', fontSize: '0.8125rem' }}>Start instantly</p>
+          <div style={{ display: 'grid', gridTemplateColumns: isMobile ? '1fr 1fr' : 'repeat(3, 1fr)', gap: 12, marginBottom: 24 }}>
+            <div className="card" style={{ padding: 16, cursor: 'pointer' }} onClick={() => setShowCreate(true)}>
+              <div style={{ fontSize: '1.75rem', marginBottom: 6 }}>🎬</div>
+              <h3 style={{ fontFamily: 'Syne, sans-serif', fontSize: '0.875rem', fontWeight: 600, color: 'var(--text-primary)', marginBottom: 2 }}>New Meeting</h3>
+              <p style={{ color: 'var(--text-secondary)', fontSize: '0.75rem' }}>Start instantly</p>
             </div>
-            <div className="card p-5" style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
-              <div style={{ fontSize: '1.75rem' }}>🔗</div>
-              <h3 style={{ fontFamily: 'Syne, sans-serif', fontSize: '0.9375rem', fontWeight: 600, color: 'var(--text-primary)' }}>Join by ID</h3>
-              <div className="flex gap-2">
-                <input className="input" style={{ fontSize: '0.8rem', padding: '6px 12px' }}
-                  placeholder="Meeting ID" value={joinCode}
+
+            <div className="card" style={{ padding: 16 }}>
+              <div style={{ fontSize: '1.75rem', marginBottom: 6 }}>🔗</div>
+              <h3 style={{ fontFamily: 'Syne, sans-serif', fontSize: '0.875rem', fontWeight: 600, color: 'var(--text-primary)', marginBottom: 8 }}>Join by ID</h3>
+              <div style={{ display: 'flex', gap: 6 }}>
+                <input className="input" style={{ fontSize: '0.75rem', padding: '6px 10px', flex: 1, minWidth: 0 }}
+                  placeholder="Meeting ID"
+                  value={joinCode}
                   onChange={e => setJoinCode(e.target.value)}
                   onKeyDown={e => e.key === 'Enter' && joinMeeting()} />
-                <button className="btn-primary" style={{ padding: '6px 12px', fontSize: '0.8rem', flexShrink: 0 }}
-                  onClick={joinMeeting}>Join</button>
+                <button className="btn-primary" style={{ padding: '6px 10px', fontSize: '0.75rem', flexShrink: 0 }} onClick={joinMeeting}>Join</button>
               </div>
             </div>
-            <div className="card p-5">
-              <div style={{ fontSize: '1.75rem', marginBottom: 8 }}>📊</div>
-              <h3 style={{ fontFamily: 'Syne, sans-serif', fontSize: '0.9375rem', fontWeight: 600, color: 'var(--text-primary)', marginBottom: 2 }}>Total meetings</h3>
+
+            <div className="card" style={{ padding: 16, gridColumn: isMobile ? '1 / -1' : 'auto' }}>
+              <div style={{ fontSize: '1.75rem', marginBottom: 6 }}>📊</div>
+              <h3 style={{ fontFamily: 'Syne, sans-serif', fontSize: '0.875rem', fontWeight: 600, color: 'var(--text-primary)', marginBottom: 2 }}>Total meetings</h3>
               <p style={{ fontFamily: 'Syne, sans-serif', fontSize: '2rem', fontWeight: 800, color: 'var(--accent)' }}>{meetings.length}</p>
             </div>
           </div>
 
           {/* Meetings list */}
           <div>
-            <div className="flex items-center gap-1 mb-4" style={{ borderBottom: '1px solid var(--border)', paddingBottom: 0 }}>
+            {/* Tabs */}
+            <div style={{ display: 'flex', borderBottom: '1px solid var(--border)', marginBottom: 16 }}>
               {[['upcoming', '📅 Upcoming'], ['past', '📋 Past'], ['all', '🗂 All']].map(([key, label]) => (
                 <button key={key} onClick={() => setTab(key)} style={{
-                  padding: '8px 16px', border: 'none', background: 'none', cursor: 'pointer',
-                  fontFamily: 'Syne, sans-serif', fontSize: '0.875rem', fontWeight: 600,
+                  padding: '8px 14px', border: 'none', background: 'none', cursor: 'pointer',
+                  fontFamily: 'Syne, sans-serif', fontWeight: 600, fontSize: '0.8125rem',
                   color: tab === key ? 'var(--accent)' : 'var(--text-muted)',
                   borderBottom: `2px solid ${tab === key ? 'var(--accent)' : 'transparent'}`,
-                  transition: 'all 0.2s', marginBottom: -1,
+                  marginBottom: -1, transition: 'all 0.2s',
                 }}>
                   {label}
                 </button>
@@ -213,26 +264,17 @@ export default function Dashboard() {
             </div>
 
             {loading ? (
-              <div className="flex items-center justify-center py-16" style={{ color: 'var(--text-muted)' }}>
-                Loading meetings…
-              </div>
+              <div style={{ textAlign: 'center', color: 'var(--text-muted)', padding: '3rem' }}>Loading meetings…</div>
             ) : filteredMeetings.length === 0 ? (
-              <div className="flex flex-col items-center justify-center py-16 gap-4">
+              <div style={{ textAlign: 'center', padding: '3rem', display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 12 }}>
                 <div style={{ fontSize: '3rem' }}>🎯</div>
                 <p style={{ color: 'var(--text-muted)', fontFamily: 'Syne, sans-serif' }}>No meetings yet. Create your first one!</p>
                 <button className="btn-primary" onClick={() => setShowCreate(true)}>+ New meeting</button>
               </div>
             ) : (
-              <div className="flex flex-col gap-3">
-                {filteredMeetings.map(m => (
-                  <MeetingCard
-                    key={m._id}
-                    meeting={m}
-                    onJoin={(id) => navigate(`/meeting/${id}`)}
-                    onEnd={(id) => {}}
-                  />
-                ))}
-              </div>
+              filteredMeetings.map(m => (
+                <MeetingCard key={m._id} meeting={m} onJoin={(id) => navigate(`/meeting/${id}`)} />
+              ))
             )}
           </div>
         </div>
@@ -240,27 +282,26 @@ export default function Dashboard() {
 
       {/* Create meeting modal */}
       {showCreate && (
-        <div style={{ position: 'fixed', inset: 0, zIndex: 50, display: 'flex', alignItems: 'center', justifyContent: 'center', background: 'rgba(0,0,0,0.7)', backdropFilter: 'blur(8px)' }}
-          onClick={() => setShowCreate(false)}>
-          <div className="card p-8 animate-scaleIn" style={{ width: '100%', maxWidth: 440 }}
-            onClick={e => e.stopPropagation()}>
-            <h2 style={{ fontFamily: 'Syne, sans-serif', fontSize: '1.375rem', fontWeight: 700, color: 'var(--text-primary)', marginBottom: '1.5rem' }}>
-              Create meeting
-            </h2>
-            <form onSubmit={createMeeting} className="flex flex-col gap-4">
+        <div onClick={() => setShowCreate(false)} style={{ position: 'fixed', inset: 0, zIndex: 100, display: 'flex', alignItems: 'center', justifyContent: 'center', background: 'rgba(0,0,0,0.7)', backdropFilter: 'blur(8px)', padding: '1rem' }}>
+          <div className="card animate-scaleIn" style={{ width: '100%', maxWidth: 420, padding: 28 }} onClick={e => e.stopPropagation()}>
+            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 20 }}>
+              <h2 style={{ fontFamily: 'Syne, sans-serif', fontSize: '1.25rem', fontWeight: 700, color: 'var(--text-primary)' }}>Create meeting</h2>
+              <button onClick={() => setShowCreate(false)} style={{ background: 'none', border: 'none', cursor: 'pointer', color: 'var(--text-muted)', fontSize: '1.5rem', lineHeight: 1 }}>×</button>
+            </div>
+            <form onSubmit={createMeeting} style={{ display: 'flex', flexDirection: 'column', gap: 14 }}>
               <div>
                 <label className="label">Meeting title</label>
                 <input className="input" placeholder="Weekly team sync" value={newMeeting.title}
-                  onChange={e => setNewMeeting(p => ({ ...p, title: e.target.value }))} required />
+                  onChange={e => setNewMeeting(p => ({ ...p, title: e.target.value }))} required autoFocus />
               </div>
               <div>
                 <label className="label">Schedule (optional)</label>
                 <input className="input" type="datetime-local" value={newMeeting.scheduledAt}
                   onChange={e => setNewMeeting(p => ({ ...p, scheduledAt: e.target.value }))} />
               </div>
-              <div className="flex gap-3 mt-2">
-                <button type="button" className="btn-ghost flex-1" onClick={() => setShowCreate(false)}>Cancel</button>
-                <button type="submit" className="btn-primary flex-1" disabled={creating}>
+              <div style={{ display: 'flex', gap: 10, marginTop: 4 }}>
+                <button type="button" className="btn-ghost" style={{ flex: 1 }} onClick={() => setShowCreate(false)}>Cancel</button>
+                <button type="submit" className="btn-primary" style={{ flex: 1 }} disabled={creating}>
                   {creating ? 'Creating…' : 'Start meeting →'}
                 </button>
               </div>
