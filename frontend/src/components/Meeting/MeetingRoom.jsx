@@ -34,6 +34,7 @@ export default function MeetingRoom() {
   const [connectionError, setConnectionError] = useState(null);
   const [screenShareRequests, setScreenShareRequests] = useState([]);
   const [isMobile, setIsMobile] = useState(window.innerWidth < 768);
+  const [screenShareSupported] = useState(!!(navigator.mediaDevices?.getDisplayMedia));
 
   const socketRef = useRef(null);
   const recordingIdRef = useRef(null);
@@ -51,14 +52,14 @@ export default function MeetingRoom() {
     String(meeting.host?._id || meeting.host) === String(user._id)
   );
 
-  // ── Load meeting data ────────────────────────────────────────
+  // ── Load meeting ─────────────────────────────────────────────
   useEffect(() => {
     const loadMeeting = async () => {
       try {
-        const joinRes = await api.post(`/meetings/${meetingId}/join`, {});
-        setMeeting(joinRes.data.meeting);
-        const activeParts = joinRes.data.meeting.participants?.filter(p => p.isActive) || [];
-        setParticipants(activeParts.map(p => ({
+        const res = await api.post(`/meetings/${meetingId}/join`, {});
+        setMeeting(res.data.meeting);
+        const active = res.data.meeting.participants?.filter(p => p.isActive) || [];
+        setParticipants(active.map(p => ({
           userId: String(p.user?._id || p.user),
           name: p.name,
           role: p.role,
@@ -76,7 +77,7 @@ export default function MeetingRoom() {
     loadMeeting();
   }, [meetingId]);
 
-  // ── Socket + Agora setup ─────────────────────────────────────
+  // ── Socket + Agora ───────────────────────────────────────────
   useEffect(() => {
     if (!meeting || connectionError) return;
 
@@ -85,7 +86,6 @@ export default function MeetingRoom() {
     socketRef.current = socket;
     socket.emit('meeting:join', { meetingId });
 
-    // Participant events
     socket.on('participant:joined', ({ userId, name }) => {
       const uid = String(userId);
       setParticipants(prev => {
@@ -118,7 +118,6 @@ export default function MeetingRoom() {
       navigate('/dashboard');
     });
 
-    // Media state
     socket.on('media:audio', ({ userId, muted }) => {
       setParticipants(prev => prev.map(p =>
         p.userId === String(userId) ? { ...p, isMuted: muted } : p
@@ -146,7 +145,7 @@ export default function MeetingRoom() {
       }, REACTIONS_TIMEOUT);
     });
 
-    // Screen share
+    // ── Screen share: host receives request ──────────────────
     socket.on('screenshare:request', ({ userId, name }) => {
       const uid = String(userId);
       const currentIsHost = String(meeting?.host?._id || meeting?.host) === String(user?._id);
@@ -155,28 +154,40 @@ export default function MeetingRoom() {
           ...prev.filter(r => r.userId !== uid),
           { userId: uid, name },
         ]);
-        toast(`${name} wants to share screen`, { icon: '🖥️', duration: 5000 });
+        toast(`${name} wants to share screen`, { icon: '🖥️', duration: 6000 });
       }
     });
 
+    // ── Screen share: participant receives approval ───────────
     socket.on('screenshare:approved', ({ userId }) => {
       const incomingId = String(userId);
       const myId = String(user?._id);
+      console.log('[screenshare:approved] incoming:', incomingId, 'mine:', myId);
+
       if (incomingId === myId) {
-        toast.success('Approved! Choose a window to share.');
+        // ✅ Check mobile support first
+        if (!navigator.mediaDevices?.getDisplayMedia) {
+          toast.error('Screen sharing is not supported on mobile browsers. Use desktop Chrome/Edge/Firefox.', { duration: 5000 });
+          return;
+        }
+
+        toast.success('Approved! Select a window to share.');
         setTimeout(async () => {
           try {
             await agoraRef.current.startScreenShare();
             socketRef.current?.emit('media:screenShare', { meetingId, sharing: true });
-            toast.success('Screen sharing started');
+            toast.success('Screen sharing started ✅');
           } catch (err) {
+            console.error('startScreenShare error:', err);
             if (err.name === 'NotAllowedError' || err.message?.toLowerCase().includes('cancel')) {
-              toast.error('Screen share cancelled.');
+              toast.error('Screen share cancelled — you closed the dialog.');
+            } else if (err.name === 'NotSupportedError') {
+              toast.error('Screen sharing not supported on this browser.');
             } else {
               toast.error('Screen share failed: ' + err.message);
             }
           }
-        }, 400);
+        }, 300);
       }
     });
 
@@ -216,10 +227,9 @@ export default function MeetingRoom() {
       });
     });
 
-    // ── Join Agora ────────────────────────────────────────────
+    // ── Join Agora ───────────────────────────────────────────
     if (!agoraJoinedRef.current) {
       agoraJoinedRef.current = true;
-
       const uid = parseInt(String(user?._id || '0').slice(-8), 16) % 2147483647
         || Math.floor(Math.random() * 1000000);
 
@@ -239,22 +249,13 @@ export default function MeetingRoom() {
           console.error('Agora join failed:', err);
           agoraJoinedRef.current = false;
 
-          // OPERATION_ABORTED is a React StrictMode double-invoke artifact — ignore it
-          if (
-            err.code === 'OPERATION_ABORTED' ||
-            err.message?.includes('cancel') ||
-            err.message?.includes('OPERATION_ABORTED')
-          ) {
+          // Ignore React StrictMode double-invoke artifact
+          if (err.code === 'OPERATION_ABORTED' || err.message?.includes('cancel')) {
             setJoined(true);
             return;
           }
-
-          if (
-            err.code === 'INVALID_VENDOR_KEY' ||
-            err.code === 'CAN_NOT_GET_GATEWAY_SERVER' ||
-            err.message?.includes('App ID')
-          ) {
-            toast.error('Invalid Agora App ID. Go to console.agora.io — disable App Certificate.', { duration: 8000 });
+          if (err.code === 'INVALID_VENDOR_KEY' || err.code === 'CAN_NOT_GET_GATEWAY_SERVER') {
+            toast.error('Invalid Agora App ID. Go to console.agora.io → disable App Certificate.', { duration: 8000 });
           } else {
             toast.error(`Media connection failed: ${err.message}`, { duration: 6000 });
           }
@@ -292,6 +293,7 @@ export default function MeetingRoom() {
 
   const handleToggleAudio = useCallback(async () => {
     await agora.toggleAudio();
+    // ✅ Emit immediately without waiting
     socketRef.current?.emit('media:audio', { meetingId, muted: !agora.isAudioMuted });
   }, [agora, meetingId]);
 
@@ -305,37 +307,46 @@ export default function MeetingRoom() {
       await agora.stopScreenShare();
       socketRef.current?.emit('media:screenShare', { meetingId, sharing: false });
       toast('Screen sharing stopped');
-    } else {
-      if (isHost) {
-        try {
-          await agora.startScreenShare();
-          socketRef.current?.emit('media:screenShare', { meetingId, sharing: true });
-          toast.success('Screen sharing started');
-        } catch (err) {
-          if (err.name === 'NotAllowedError') {
-            toast.error('Screen share cancelled');
-          } else {
-            toast.error('Screen share failed: ' + err.message);
-          }
-        }
-      } else {
-        socketRef.current?.emit('screenshare:request', {
-          meetingId,
-          userId: String(user._id),
-          name: user.name,
-        });
-        toast('Screen share request sent to host', { icon: '📤' });
-      }
+      return;
     }
-  }, [agora, meetingId, isHost, user]);
+
+    // ✅ Check mobile support
+    if (!screenShareSupported) {
+      toast.error('Screen sharing is not supported on mobile browsers. Please use desktop Chrome, Edge or Firefox.', { duration: 5000 });
+      return;
+    }
+
+    if (isHost) {
+      // Host can share directly
+      try {
+        await agora.startScreenShare();
+        socketRef.current?.emit('media:screenShare', { meetingId, sharing: true });
+        toast.success('Screen sharing started');
+      } catch (err) {
+        if (err.name === 'NotAllowedError' || err.message?.toLowerCase().includes('cancel')) {
+          toast.error('Screen share cancelled');
+        } else if (err.name === 'NotSupportedError') {
+          toast.error('Screen sharing not supported on this device/browser.');
+        } else {
+          toast.error('Screen share failed: ' + err.message);
+        }
+      }
+    } else {
+      // ✅ Participant sends request to host
+      socketRef.current?.emit('screenshare:request', {
+        meetingId,
+        userId: String(user._id),
+        name: user.name,
+      });
+      toast('Screen share request sent to host. Waiting for approval…', { icon: '📤', duration: 4000 });
+    }
+  }, [agora, meetingId, isHost, user, screenShareSupported]);
 
   const handleToggleHand = useCallback(() => {
     const newState = !isHandRaised;
     setIsHandRaised(newState);
     socketRef.current?.emit('hand:raise', { meetingId, raised: newState, name: user?.name });
-    setParticipants(prev => prev.map(p =>
-      p.isLocal ? { ...p, isHandRaised: newState } : p
-    ));
+    setParticipants(prev => prev.map(p => p.isLocal ? { ...p, isHandRaised: newState } : p));
     if (newState) toast('Hand raised — host has been notified', { icon: '✋' });
   }, [isHandRaised, meetingId, user]);
 
@@ -387,7 +398,7 @@ export default function MeetingRoom() {
         p.userId === String(userId) ? { ...p, isMuted: true } : p
       ));
       toast.success('Participant muted');
-    } catch { toast.error('Failed to mute participant'); }
+    } catch { toast.error('Failed to mute'); }
   }, [isHost, meetingId]);
 
   const handleLeaveMeeting = useCallback(async () => {
@@ -413,7 +424,7 @@ export default function MeetingRoom() {
     toast.success('Meeting ID copied!');
   };
 
-  // ── Build tile data ───────────────────────────────────────────
+  // ── Tile data ─────────────────────────────────────────────────
 
   const localParticipant = {
     userId: String(user?._id),
@@ -426,12 +437,9 @@ export default function MeetingRoom() {
     role: isHost ? 'host' : 'participant',
   };
 
-  // ✅ Match remote Agora users to participant names properly
+  // ✅ Match remote Agora users to participant names
   const remoteWithTracks = agora.remoteUsers.map((ru, index) => {
-    // First try exact agoraUid match
     let p = participants.find(pp => pp.agoraUid === ru.uid);
-
-    // Fallback: get unmatched non-local participants in order
     if (!p) {
       const matched = new Set(
         agora.remoteUsers
@@ -441,7 +449,6 @@ export default function MeetingRoom() {
       const unmatched = participants.filter(pp => !pp.isLocal && !matched.has(pp.userId));
       p = unmatched[index] || {};
     }
-
     return {
       ...p,
       agoraUid: ru.uid,
@@ -454,7 +461,6 @@ export default function MeetingRoom() {
   });
 
   const allTiles = [localParticipant, ...remoteWithTracks];
-
   const pinnedTile = pinnedUserId
     ? allTiles.find(t => String(t.userId || t.agoraUid) === pinnedUserId)
     : null;
@@ -470,42 +476,24 @@ export default function MeetingRoom() {
     ...participants.filter(p => !p.isLocal),
   ];
 
-  // ── Loading / error screens ───────────────────────────────────
+  // ── Screens ───────────────────────────────────────────────────
 
   if (loading) return (
-    <div style={{
-      minHeight: '100vh', background: 'var(--bg-primary)',
-      display: 'flex', alignItems: 'center', justifyContent: 'center',
-    }}>
+    <div style={{ minHeight: '100vh', background: 'var(--bg-primary)', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
       <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 16 }}>
-        <div style={{
-          width: 40, height: 40, borderRadius: '50%',
-          border: '3px solid var(--accent)', borderTopColor: 'transparent',
-          animation: 'spin 0.8s linear infinite',
-        }} />
-        <p style={{ color: 'var(--text-secondary)', fontFamily: 'Syne, sans-serif' }}>
-          Joining meeting…
-        </p>
+        <div style={{ width: 40, height: 40, borderRadius: '50%', border: '3px solid var(--accent)', borderTopColor: 'transparent', animation: 'spin 0.8s linear infinite' }} />
+        <p style={{ color: 'var(--text-secondary)', fontFamily: 'Syne, sans-serif' }}>Joining meeting…</p>
       </div>
     </div>
   );
 
   if (connectionError) return (
-    <div style={{
-      minHeight: '100vh', background: 'var(--bg-primary)',
-      display: 'flex', alignItems: 'center', justifyContent: 'center', padding: '1rem',
-    }}>
+    <div style={{ minHeight: '100vh', background: 'var(--bg-primary)', display: 'flex', alignItems: 'center', justifyContent: 'center', padding: '1rem' }}>
       <div className="card p-8 text-center animate-slideUp" style={{ maxWidth: 400, width: '100%' }}>
         <div style={{ fontSize: '3rem', marginBottom: '1rem' }}>⚠️</div>
-        <h2 style={{ fontFamily: 'Syne, sans-serif', fontSize: '1.25rem', marginBottom: '0.5rem' }}>
-          Cannot join meeting
-        </h2>
-        <p style={{ color: 'var(--text-secondary)', fontSize: '0.875rem', marginBottom: '1.5rem' }}>
-          {connectionError}
-        </p>
-        <button className="btn-primary" style={{ width: '100%' }} onClick={() => navigate('/dashboard')}>
-          Back to dashboard
-        </button>
+        <h2 style={{ fontFamily: 'Syne, sans-serif', fontSize: '1.25rem', marginBottom: '0.5rem' }}>Cannot join meeting</h2>
+        <p style={{ color: 'var(--text-secondary)', fontSize: '0.875rem', marginBottom: '1.5rem' }}>{connectionError}</p>
+        <button className="btn-primary" style={{ width: '100%' }} onClick={() => navigate('/dashboard')}>Back to dashboard</button>
       </div>
     </div>
   );
@@ -513,118 +501,78 @@ export default function MeetingRoom() {
   // ── Main render ───────────────────────────────────────────────
 
   return (
-    <div style={{
-      height: '100dvh', display: 'flex', flexDirection: 'column',
-      background: 'var(--bg-primary)', overflow: 'hidden',
-    }}>
+    <div style={{ height: '100dvh', display: 'flex', flexDirection: 'column', background: 'var(--bg-primary)', overflow: 'hidden' }}>
 
-      {/* ── Top bar ── */}
+      {/* Top bar */}
       <div style={{
         background: 'var(--bg-secondary)', borderBottom: '1px solid var(--border)',
         padding: '8px 12px', display: 'flex', alignItems: 'center',
         justifyContent: 'space-between', flexShrink: 0, gap: 8,
       }}>
         <div style={{ display: 'flex', alignItems: 'center', gap: 10, minWidth: 0 }}>
-          <div style={{
-            width: 28, height: 28, flexShrink: 0, borderRadius: 7,
-            background: 'linear-gradient(135deg, #3b82f6, #8b5cf6)',
-            display: 'flex', alignItems: 'center', justifyContent: 'center',
-          }}>
+          <div style={{ width: 28, height: 28, flexShrink: 0, background: 'linear-gradient(135deg, #3b82f6, #8b5cf6)', borderRadius: 7, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
             <span style={{ fontSize: 14 }}>⬡</span>
           </div>
           <div style={{ minWidth: 0 }}>
-            <h1 style={{
-              fontFamily: 'Syne, sans-serif', fontSize: '0.875rem', fontWeight: 700,
-              color: 'var(--text-primary)', lineHeight: 1.2,
-              whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis',
-            }}>
+            <h1 style={{ fontFamily: 'Syne, sans-serif', fontSize: '0.875rem', fontWeight: 700, color: 'var(--text-primary)', lineHeight: 1.2, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
               {meeting?.title || 'Meeting'}
             </h1>
-            <button onClick={copyMeetingId} style={{
-              fontSize: '0.7rem', color: 'var(--text-muted)',
-              background: 'none', border: 'none', cursor: 'pointer', padding: 0,
-            }}>
+            <button onClick={copyMeetingId} style={{ fontSize: '0.7rem', color: 'var(--text-muted)', background: 'none', border: 'none', cursor: 'pointer', padding: 0 }}>
               {meetingId} · tap to copy
             </button>
           </div>
         </div>
 
         <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexShrink: 0 }}>
-          <div style={{
-            width: 7, height: 7, borderRadius: '50%',
-            background: joined ? 'var(--success)' : 'var(--warning)',
-            boxShadow: joined ? '0 0 6px var(--success)' : 'none',
-          }} />
-          <span className="badge badge-blue" style={{ fontSize: '0.7rem' }}>
-            👥 {allTiles.length}
-          </span>
+          <div style={{ width: 7, height: 7, borderRadius: '50%', background: joined ? 'var(--success)' : 'var(--warning)', boxShadow: joined ? '0 0 6px var(--success)' : 'none' }} />
+          <span className="badge badge-blue" style={{ fontSize: '0.7rem' }}>👥 {allTiles.length}</span>
           {isRecording && (
             <div style={{ display: 'flex', alignItems: 'center', gap: 4 }}>
-              <div className="recording-indicator" style={{
-                width: 7, height: 7, borderRadius: '50%', background: 'var(--danger)',
-              }} />
-              <span style={{
-                fontSize: '0.7rem', color: 'var(--danger)',
-                fontFamily: 'Syne, sans-serif', fontWeight: 700,
-              }}>REC</span>
+              <div className="recording-indicator" style={{ width: 7, height: 7, borderRadius: '50%', background: 'var(--danger)' }} />
+              <span style={{ fontSize: '0.7rem', color: 'var(--danger)', fontFamily: 'Syne, sans-serif', fontWeight: 700 }}>REC</span>
             </div>
           )}
           {isHost && (
             <div style={{ display: 'flex', gap: 6 }}>
-              <button className="btn-ghost" style={{ fontSize: '0.7rem', padding: '4px 8px' }}
-                onClick={() => setShowBreakout(true)}>🏠</button>
-              <button className="btn-ghost" style={{ fontSize: '0.7rem', padding: '4px 8px' }}
-                onClick={handleToggleLock}>🔒</button>
+              <button className="btn-ghost" style={{ fontSize: '0.7rem', padding: '4px 8px' }} onClick={() => setShowBreakout(true)}>🏠</button>
+              <button className="btn-ghost" style={{ fontSize: '0.7rem', padding: '4px 8px' }} onClick={handleToggleLock}>🔒</button>
             </div>
           )}
         </div>
       </div>
 
-      {/* ── Screen share request banner (host only) ── */}
+      {/* Screen share request banner */}
       {isHost && screenShareRequests.length > 0 && (
-        <div style={{
-          background: 'rgba(59,130,246,0.12)',
-          borderBottom: '1px solid var(--accent)',
-          padding: '8px 16px', display: 'flex', flexDirection: 'column', gap: 6,
-        }}>
+        <div style={{ background: 'rgba(59,130,246,0.12)', borderBottom: '1px solid var(--accent)', padding: '8px 16px', display: 'flex', flexDirection: 'column', gap: 6 }}>
           {screenShareRequests.map(req => (
-            <div key={req.userId} style={{
-              display: 'flex', alignItems: 'center',
-              justifyContent: 'space-between', gap: 8, flexWrap: 'wrap',
-            }}>
+            <div key={req.userId} style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 8, flexWrap: 'wrap' }}>
               <span style={{ fontSize: '0.8rem', color: 'var(--text-primary)' }}>
                 🖥️ <strong>{req.name}</strong> wants to share their screen
               </span>
               <div style={{ display: 'flex', gap: 6 }}>
                 <button className="btn-primary" style={{ fontSize: '0.75rem', padding: '4px 14px' }}
-                  onClick={() => handleScreenShareApprove(req.userId)}>
-                  Allow
-                </button>
+                  onClick={() => handleScreenShareApprove(req.userId)}>Allow</button>
                 <button className="btn-ghost" style={{ fontSize: '0.75rem', padding: '4px 14px' }}
-                  onClick={() => handleScreenShareDeny(req.userId)}>
-                  Deny
-                </button>
+                  onClick={() => handleScreenShareDeny(req.userId)}>Deny</button>
               </div>
             </div>
           ))}
         </div>
       )}
 
-      {/* ── Main content ── */}
+      {/* Main content */}
       <div style={{ flex: 1, display: 'flex', overflow: 'hidden', position: 'relative' }}>
 
         {/* Video grid */}
-        <div style={{
-          flex: 1, overflow: 'hidden', display: 'flex',
-          flexDirection: 'column', padding: 8, gap: 8, minWidth: 0,
-        }}>
-          {/* Pinned tile */}
+        <div style={{ flex: 1, overflow: 'hidden', display: 'flex', flexDirection: 'column', padding: 8, gap: 8, minWidth: 0 }}>
+
           {pinnedTile && (
             <div style={{ height: '55%', flexShrink: 0 }}>
               <VideoTile
                 uid={pinnedTile.userId || pinnedTile.agoraUid}
                 name={pinnedTile.name}
                 videoTrack={pinnedTile.videoTrack}
+                audioTrack={pinnedTile.audioTrack}
                 isMuted={pinnedTile.isMuted}
                 isVideoOff={pinnedTile.isVideoOff}
                 isLocal={pinnedTile.isLocal}
@@ -637,11 +585,7 @@ export default function MeetingRoom() {
             </div>
           )}
 
-          {/* Grid */}
-          <div
-            style={{ flex: 1, display: 'grid', gap: 8, overflow: 'hidden', alignContent: 'start' }}
-            className={gridClass}
-          >
+          <div style={{ flex: 1, display: 'grid', gap: 8, overflow: 'hidden', alignContent: 'start' }} className={gridClass}>
             {gridTiles.map((tile, i) => {
               const tileId = String(tile.userId || tile.agoraUid);
               return (
@@ -667,8 +611,7 @@ export default function MeetingRoom() {
         {/* Side panel */}
         {activePanel && (
           <div style={{
-            width: isMobile ? '100%' : 300,
-            flexShrink: 0,
+            width: isMobile ? '100%' : 300, flexShrink: 0,
             position: isMobile ? 'absolute' : 'relative',
             right: 0, top: 0, bottom: 0, zIndex: 20,
           }} className="animate-slideRight">
@@ -695,7 +638,7 @@ export default function MeetingRoom() {
         )}
       </div>
 
-      {/* ── Controls bar ── */}
+      {/* Controls */}
       <ControlsBar
         isAudioMuted={agora.isAudioMuted}
         isVideoOff={agora.isVideoOff}
@@ -705,6 +648,7 @@ export default function MeetingRoom() {
         activePanel={activePanel}
         networkQuality={agora.networkQuality}
         participantCount={allTiles.length}
+        screenShareSupported={screenShareSupported}
         onToggleAudio={handleToggleAudio}
         onToggleVideo={handleToggleVideo}
         onToggleScreenShare={handleToggleScreenShare}
@@ -719,7 +663,6 @@ export default function MeetingRoom() {
         meetingId={meetingId}
       />
 
-      {/* ── Breakout rooms ── */}
       {showBreakout && (
         <BreakoutRoomsPanel
           meetingId={meetingId}
@@ -730,17 +673,10 @@ export default function MeetingRoom() {
         />
       )}
 
-      {/* ── Floating reactions ── */}
-      <div style={{
-        position: 'fixed', bottom: 100,
-        right: activePanel ? 316 : 16,
-        zIndex: 100, pointerEvents: 'none',
-        display: 'flex', flexDirection: 'column', gap: 8,
-      }}>
+      {/* Reactions */}
+      <div style={{ position: 'fixed', bottom: 100, right: activePanel ? 316 : 16, zIndex: 100, pointerEvents: 'none', display: 'flex', flexDirection: 'column', gap: 8 }}>
         {Object.entries(reactions).map(([uid, emoji]) => (
-          <div key={uid} className="reaction-float" style={{ fontSize: '2.5rem' }}>
-            {emoji}
-          </div>
+          <div key={uid} className="reaction-float" style={{ fontSize: '2.5rem' }}>{emoji}</div>
         ))}
       </div>
     </div>
