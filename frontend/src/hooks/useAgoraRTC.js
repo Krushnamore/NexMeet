@@ -3,9 +3,6 @@ import AgoraRTC from 'agora-rtc-sdk-ng';
 
 AgoraRTC.setLogLevel(3);
 
-// ✅ Low latency mode
-AgoraRTC.setParameter('SUBSCRIBE_TCC', true);
-
 export const useAgoraRTC = () => {
   const clientRef = useRef(null);
   const localTracksRef = useRef({ audio: null, video: null, screen: null });
@@ -22,12 +19,7 @@ export const useAgoraRTC = () => {
 
   const getClient = () => {
     if (!clientRef.current) {
-      clientRef.current = AgoraRTC.createClient({
-        mode: 'rtc',
-        codec: 'vp8',
-        // ✅ Low latency optimizations
-        role: 'host',
-      });
+      clientRef.current = AgoraRTC.createClient({ mode: 'rtc', codec: 'vp8' });
     }
     return clientRef.current;
   };
@@ -45,7 +37,6 @@ export const useAgoraRTC = () => {
 
     const client = getClient();
 
-    // ✅ user-published: fast subscribe
     client.on('user-published', async (user, mediaType) => {
       try {
         await client.subscribe(user, mediaType);
@@ -89,9 +80,7 @@ export const useAgoraRTC = () => {
       setRemoteUsers(prev => prev.filter(u => u.uid !== user.uid));
     });
 
-    client.on('connection-state-change', (state) => {
-      setConnectionState(state);
-    });
+    client.on('connection-state-change', (state) => setConnectionState(state));
 
     client.on('network-quality', (stats) => {
       setNetworkQuality({
@@ -100,7 +89,6 @@ export const useAgoraRTC = () => {
       });
     });
 
-    // ✅ Get App ID
     let appId = import.meta.env.VITE_AGORA_APP_ID;
     if (!appId || appId.trim() === '') {
       try {
@@ -128,7 +116,7 @@ export const useAgoraRTC = () => {
     let videoTrack = null;
     const errors = { audio: null, video: null };
 
-    // ✅ Create mic and camera in PARALLEL for speed
+    // ✅ Create mic and camera in PARALLEL for faster startup
     const [audioResult, videoResult] = await Promise.allSettled([
       AgoraRTC.createMicrophoneAudioTrack({
         encoderConfig: {
@@ -142,14 +130,14 @@ export const useAgoraRTC = () => {
       }),
       AgoraRTC.createCameraVideoTrack({
         encoderConfig: {
-          width: { ideal: 640, min: 320 },
-          height: { ideal: 480, min: 240 },
-          frameRate: { ideal: 24, min: 15 },
+          width: 640,
+          height: 480,
+          frameRate: 24,
           bitrateMax: 800,
           bitrateMin: 200,
         },
         facingMode: 'user',
-        optimizationMode: 'motion', // ✅ Better for video calls
+        optimizationMode: 'motion',
       }),
     ]);
 
@@ -177,13 +165,12 @@ export const useAgoraRTC = () => {
       console.warn('❌ Camera error:', err.name, err.message);
       if (err.name === 'NotAllowedError') errors.video = 'Camera blocked. Click 🔒 → allow Camera → refresh.';
       else if (err.name === 'NotFoundError') errors.video = 'No camera found.';
-      else if (err.name === 'NotReadableError') errors.video = 'Camera busy. Use a different browser for testing.';
+      else if (err.name === 'NotReadableError') errors.video = 'Camera busy. Use a different browser.';
       else errors.video = err.message;
     }
 
     setDeviceError(errors);
 
-    // ✅ Publish all tracks at once
     const tracksToPublish = [audioTrack, videoTrack].filter(Boolean);
     if (tracksToPublish.length > 0) {
       await client.publish(tracksToPublish);
@@ -196,16 +183,13 @@ export const useAgoraRTC = () => {
   const leave = useCallback(async () => {
     const client = clientRef.current;
     if (!client) return;
-
     Object.values(localTracksRef.current).forEach(track => {
       if (track) { try { track.stop(); track.close(); } catch {} }
     });
     localTracksRef.current = { audio: null, video: null, screen: null };
-
     try { await client.leave(); } catch {}
     clientRef.current = null;
     joinedRef.current = false;
-
     setLocalAudioTrack(null);
     setLocalVideoTrack(null);
     setRemoteUsers([]);
@@ -238,16 +222,19 @@ export const useAgoraRTC = () => {
     const client = clientRef.current;
     if (!client) throw new Error('Not connected');
 
-    // ✅ Check browser support first
     if (!navigator.mediaDevices?.getDisplayMedia) {
-      throw Object.assign(new Error('Screen sharing is not supported on this browser/device.'), { name: 'NotSupportedError' });
+      throw Object.assign(
+        new Error('Screen sharing is not supported on this browser/device.'),
+        { name: 'NotSupportedError' }
+      );
     }
 
+    // ✅ Fixed values only — no min/ideal objects that cause browser errors
     const screenTrack = await AgoraRTC.createScreenVideoTrack(
       {
         encoderConfig: {
-          width: { ideal: 1280, min: 640 },
-          height: { ideal: 720, min: 480 },
+          width: 1280,
+          height: 720,
           frameRate: 15,
           bitrateMax: 1000,
         },
@@ -263,7 +250,6 @@ export const useAgoraRTC = () => {
     await client.publish(screenTrack);
     localTracksRef.current.screen = screenTrack;
 
-    // Auto stop when user clicks "Stop sharing" in browser
     const stopFn = async () => {
       if (localTracksRef.current.screen === screenTrack) {
         await stopScreenShare();

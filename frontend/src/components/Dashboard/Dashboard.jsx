@@ -12,7 +12,8 @@ const Avatar = ({ name, size = 36 }) => {
       width: size, height: size, borderRadius: 10, flexShrink: 0,
       background: 'linear-gradient(135deg, #3b82f6, #8b5cf6)',
       display: 'flex', alignItems: 'center', justifyContent: 'center',
-      fontSize: size * 0.35, fontWeight: 700, color: '#fff', fontFamily: 'Syne, sans-serif',
+      fontSize: size * 0.35, fontWeight: 700, color: '#fff',
+      fontFamily: 'Syne, sans-serif',
     }}>
       {initials}
     </div>
@@ -33,22 +34,30 @@ const MeetingCard = ({ meeting, onJoin, currentUserId }) => {
   const isHost = String(meeting.host?._id || meeting.host) === String(currentUserId);
   return (
     <div className="card animate-fadeIn" style={{ padding: '16px 18px', marginBottom: 10 }}>
-      <div style={{ display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', gap: 10, marginBottom: 8 }}>
+      <div style={{
+        display: 'flex', alignItems: 'flex-start',
+        justifyContent: 'space-between', gap: 10, marginBottom: 8,
+      }}>
         <div style={{ flex: 1, minWidth: 0 }}>
           <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 4, flexWrap: 'wrap' }}>
             <h3 style={{
               fontFamily: 'Syne, sans-serif', fontSize: '0.9375rem', fontWeight: 600,
-              color: 'var(--text-primary)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap',
+              color: 'var(--text-primary)',
+              overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap',
             }}>
               {meeting.title}
             </h3>
             {isHost && (
-              <span className="badge badge-blue" style={{ fontSize: '0.6rem', flexShrink: 0 }}>Host</span>
+              <span className="badge badge-blue" style={{ fontSize: '0.6rem', flexShrink: 0 }}>
+                Host
+              </span>
             )}
           </div>
           <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
             <StatusBadge status={meeting.status} />
-            <span style={{ color: 'var(--text-muted)', fontSize: '0.75rem' }}>ID: {meeting.meetingId}</span>
+            <span style={{ color: 'var(--text-muted)', fontSize: '0.75rem' }}>
+              ID: {meeting.meetingId}
+            </span>
           </div>
         </div>
         {meeting.status !== 'ended' && meeting.status !== 'cancelled' && (
@@ -66,7 +75,7 @@ const MeetingCard = ({ meeting, onJoin, currentUserId }) => {
           👤 {isHost ? 'You (host)' : meeting.host?.name}
         </span>
         <span style={{ color: 'var(--text-muted)', fontSize: '0.75rem' }}>
-          👥 {(meeting.participants?.filter(p => p.isActive)?.length || 0)} active
+          👥 {meeting.participants?.filter(p => p.isActive)?.length || 0} active
         </span>
         <span style={{ color: 'var(--text-muted)', fontSize: '0.75rem' }}>
           🕐 {formatDistanceToNow(new Date(meeting.createdAt), { addSuffix: true })}
@@ -101,7 +110,6 @@ export default function Dashboard() {
 
   const fetchMeetings = useCallback(async () => {
     try {
-      // ✅ Fetch ALL meetings the user participated in (hosted or joined)
       const res = await api.get('/meetings?limit=50');
       setMeetings(res.data.meetings || []);
     } catch {
@@ -112,6 +120,15 @@ export default function Dashboard() {
   }, []);
 
   useEffect(() => { fetchMeetings(); }, [fetchMeetings]);
+
+  // ✅ Stats
+  const hostedCount = meetings.filter(
+    m => String(m.host?._id || m.host) === String(user?._id)
+  ).length;
+  const joinedCount = meetings.filter(
+    m => String(m.host?._id || m.host) !== String(user?._id)
+  ).length;
+  const activeCount = meetings.filter(m => m.status === 'active').length;
 
   const createMeeting = async (e) => {
     e.preventDefault();
@@ -150,45 +167,48 @@ export default function Dashboard() {
     if (tab === 'joined') return String(m.host?._id || m.host) !== String(user?._id);
     if (tab === 'active') return m.status === 'active' || m.status === 'scheduled';
     if (tab === 'past') return m.status === 'ended';
-    return true; // 'all'
+    return true;
   });
-
-  // ✅ Stats
-  const hostedCount = meetings.filter(m => String(m.host?._id || m.host) === String(user?._id)).length;
-  const joinedCount = meetings.filter(m => String(m.host?._id || m.host) !== String(user?._id)).length;
-  const activeCount = meetings.filter(m => m.status === 'active').length;
 
   const SidebarContent = () => (
     <div style={{ display: 'flex', flexDirection: 'column', height: '100%' }}>
-      {/* Logo */}
       <div style={{
         display: 'flex', alignItems: 'center', justifyContent: 'space-between',
         padding: '20px 16px 16px', borderBottom: '1px solid var(--border)',
       }}>
         <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
           <div style={{
-            width: 32, height: 32, background: 'linear-gradient(135deg, #3b82f6, #8b5cf6)',
+            width: 32, height: 32,
+            background: 'linear-gradient(135deg, #3b82f6, #8b5cf6)',
             borderRadius: 8, display: 'flex', alignItems: 'center', justifyContent: 'center',
           }}>
             <span style={{ fontSize: 16 }}>⬡</span>
           </div>
-          <span style={{ fontFamily: 'Syne, sans-serif', fontWeight: 800, fontSize: '1.1rem', color: 'var(--text-primary)' }}>
+          <span style={{
+            fontFamily: 'Syne, sans-serif', fontWeight: 800,
+            fontSize: '1.1rem', color: 'var(--text-primary)',
+          }}>
             NexMeet
           </span>
         </div>
         {isMobile && (
           <button
             onClick={() => setSidebarOpen(false)}
-            style={{ background: 'none', border: 'none', cursor: 'pointer', color: 'var(--text-muted)', fontSize: '1.5rem', lineHeight: 1 }}
+            style={{
+              background: 'none', border: 'none', cursor: 'pointer',
+              color: 'var(--text-muted)', fontSize: '1.5rem', lineHeight: 1,
+            }}
           >
             ×
           </button>
         )}
       </div>
 
-      {/* Nav */}
       <nav style={{ flex: 1, padding: '12px 8px', display: 'flex', flexDirection: 'column', gap: 2 }}>
-        <button className="sidebar-nav-item active" style={{ border: 'none', width: '100%', textAlign: 'left' }}>
+        <button
+          className="sidebar-nav-item active"
+          style={{ border: 'none', width: '100%', textAlign: 'left' }}
+        >
           🏠 Dashboard
         </button>
         <button
@@ -207,14 +227,14 @@ export default function Dashboard() {
         </button>
       </nav>
 
-      {/* User */}
       <div style={{ borderTop: '1px solid var(--border)', padding: '12px 8px' }}>
         <div style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '8px 12px' }}>
           <Avatar name={user?.name} size={34} />
           <div style={{ flex: 1, minWidth: 0 }}>
             <p style={{
               fontFamily: 'Syne, sans-serif', fontSize: '0.875rem', fontWeight: 600,
-              color: 'var(--text-primary)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap',
+              color: 'var(--text-primary)',
+              overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap',
             }}>
               {user?.name}
             </p>
@@ -243,8 +263,9 @@ export default function Dashboard() {
       {/* Desktop Sidebar */}
       {!isMobile && (
         <aside style={{
-          width: 240, background: 'var(--bg-secondary)', borderRight: '1px solid var(--border)',
-          flexShrink: 0, height: '100vh', position: 'sticky', top: 0, overflow: 'auto',
+          width: 240, background: 'var(--bg-secondary)',
+          borderRight: '1px solid var(--border)', flexShrink: 0,
+          height: '100vh', position: 'sticky', top: 0, overflow: 'auto',
         }}>
           <SidebarContent />
         </aside>
@@ -255,7 +276,10 @@ export default function Dashboard() {
         <>
           <div
             onClick={() => setSidebarOpen(false)}
-            style={{ position: 'fixed', inset: 0, zIndex: 40, background: 'rgba(0,0,0,0.6)', backdropFilter: 'blur(4px)' }}
+            style={{
+              position: 'fixed', inset: 0, zIndex: 40,
+              background: 'rgba(0,0,0,0.6)', backdropFilter: 'blur(4px)',
+            }}
           />
           <div style={{
             position: 'fixed', left: 0, top: 0, bottom: 0, width: 260, zIndex: 50,
@@ -274,22 +298,38 @@ export default function Dashboard() {
         {isMobile && (
           <div style={{
             background: 'var(--bg-secondary)', borderBottom: '1px solid var(--border)',
-            padding: '12px 16px', display: 'flex', alignItems: 'center', justifyContent: 'space-between',
-            position: 'sticky', top: 0, zIndex: 30,
+            padding: '12px 16px', display: 'flex', alignItems: 'center',
+            justifyContent: 'space-between', position: 'sticky', top: 0, zIndex: 30,
           }}>
             <button
               onClick={() => setSidebarOpen(true)}
-              style={{ background: 'none', border: 'none', cursor: 'pointer', color: 'var(--text-primary)', fontSize: '1.5rem', lineHeight: 1, padding: 4 }}
+              style={{
+                background: 'none', border: 'none', cursor: 'pointer',
+                color: 'var(--text-primary)', fontSize: '1.5rem', lineHeight: 1, padding: 4,
+              }}
             >
               ☰
             </button>
             <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-              <div style={{ width: 28, height: 28, background: 'linear-gradient(135deg, #3b82f6, #8b5cf6)', borderRadius: 7, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+              <div style={{
+                width: 28, height: 28,
+                background: 'linear-gradient(135deg, #3b82f6, #8b5cf6)',
+                borderRadius: 7, display: 'flex', alignItems: 'center', justifyContent: 'center',
+              }}>
                 <span style={{ fontSize: 14 }}>⬡</span>
               </div>
-              <span style={{ fontFamily: 'Syne, sans-serif', fontWeight: 800, fontSize: '1.1rem', color: 'var(--text-primary)' }}>NexMeet</span>
+              <span style={{
+                fontFamily: 'Syne, sans-serif', fontWeight: 800,
+                fontSize: '1.1rem', color: 'var(--text-primary)',
+              }}>
+                NexMeet
+              </span>
             </div>
-            <button className="btn-primary" style={{ fontSize: '0.75rem', padding: '6px 12px' }} onClick={() => setShowCreate(true)}>
+            <button
+              className="btn-primary"
+              style={{ fontSize: '0.75rem', padding: '6px 12px' }}
+              onClick={() => setShowCreate(true)}
+            >
               + New
             </button>
           </div>
@@ -298,75 +338,133 @@ export default function Dashboard() {
         <div style={{ maxWidth: 900, margin: '0 auto', padding: isMobile ? '16px' : '32px 24px' }}>
 
           {/* Header */}
-          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 24, flexWrap: 'wrap', gap: 12 }}>
+          <div style={{
+            display: 'flex', alignItems: 'center', justifyContent: 'space-between',
+            marginBottom: 24, flexWrap: 'wrap', gap: 12,
+          }}>
             <div>
               <h1 style={{
                 fontFamily: 'Syne, sans-serif',
                 fontSize: isMobile ? '1.375rem' : '1.75rem',
                 fontWeight: 700, color: 'var(--text-primary)', marginBottom: 4,
               }}>
-                Good {new Date().getHours() < 12 ? 'morning' : new Date().getHours() < 18 ? 'afternoon' : 'evening'}, {user?.name?.split(' ')[0]} 👋
+                Good {new Date().getHours() < 12 ? 'morning' : new Date().getHours() < 18 ? 'afternoon' : 'evening'},{' '}
+                {user?.name?.split(' ')[0]} 👋
               </h1>
               <p style={{ color: 'var(--text-secondary)', fontSize: '0.875rem' }}>
                 {format(new Date(), 'EEEE, MMMM do yyyy')}
               </p>
             </div>
             {!isMobile && (
-              <button className="btn-primary" onClick={() => setShowCreate(true)}>+ New meeting</button>
+              <button className="btn-primary" onClick={() => setShowCreate(true)}>
+                + New meeting
+              </button>
             )}
           </div>
 
-          {/* ✅ Stats cards */}
+          {/* ✅ Stats — 2x2 grid: Total | Hosted / Active | Joined */}
           <div style={{
             display: 'grid',
-            gridTemplateColumns: isMobile ? 'repeat(2, 1fr)' : 'repeat(4, 1fr)',
-            gap: 12, marginBottom: 24,
+            gridTemplateColumns: 'repeat(2, 1fr)',
+            gap: 12,
+            marginBottom: 24,
           }}>
             {/* Total attended */}
-            <div className="card" style={{ padding: 16, cursor: 'pointer' }} onClick={() => setTab('all')}>
+            <div
+              className="card"
+              style={{ padding: 16, cursor: 'pointer' }}
+              onClick={() => setTab('all')}
+            >
               <div style={{ fontSize: '1.5rem', marginBottom: 6 }}>📊</div>
-              <p style={{ color: 'var(--text-muted)', fontSize: '0.75rem', marginBottom: 4 }}>Total attended</p>
-              <p style={{ fontFamily: 'Syne, sans-serif', fontSize: '1.75rem', fontWeight: 800, color: 'var(--accent)' }}>
+              <p style={{ color: 'var(--text-muted)', fontSize: '0.75rem', marginBottom: 4 }}>
+                Total attended
+              </p>
+              <p style={{
+                fontFamily: 'Syne, sans-serif', fontSize: '1.75rem',
+                fontWeight: 800, color: 'var(--accent)',
+              }}>
                 {meetings.length}
               </p>
             </div>
 
             {/* Hosted */}
-            <div className="card" style={{ padding: 16, cursor: 'pointer' }} onClick={() => setTab('hosted')}>
+            <div
+              className="card"
+              style={{ padding: 16, cursor: 'pointer' }}
+              onClick={() => setTab('hosted')}
+            >
               <div style={{ fontSize: '1.5rem', marginBottom: 6 }}>👑</div>
-              <p style={{ color: 'var(--text-muted)', fontSize: '0.75rem', marginBottom: 4 }}>Hosted</p>
-              <p style={{ fontFamily: 'Syne, sans-serif', fontSize: '1.75rem', fontWeight: 800, color: 'var(--purple)' }}>
+              <p style={{ color: 'var(--text-muted)', fontSize: '0.75rem', marginBottom: 4 }}>
+                Hosted
+              </p>
+              <p style={{
+                fontFamily: 'Syne, sans-serif', fontSize: '1.75rem',
+                fontWeight: 800, color: 'var(--purple)',
+              }}>
                 {hostedCount}
               </p>
             </div>
 
-            {/* Joined as participant */}
-            <div className="card" style={{ padding: 16, cursor: 'pointer' }} onClick={() => setTab('joined')}>
-              <div style={{ fontSize: '1.5rem', marginBottom: 6 }}>🤝</div>
-              <p style={{ color: 'var(--text-muted)', fontSize: '0.75rem', marginBottom: 4 }}>Joined</p>
-              <p style={{ fontFamily: 'Syne, sans-serif', fontSize: '1.75rem', fontWeight: 800, color: 'var(--teal)' }}>
-                {joinedCount}
+            {/* ✅ Active now — moved here (row 2, col 1) */}
+            <div
+              className="card"
+              style={{ padding: 16, cursor: 'pointer' }}
+              onClick={() => setTab('active')}
+            >
+              <div style={{ fontSize: '1.5rem', marginBottom: 6 }}>🔴</div>
+              <p style={{ color: 'var(--text-muted)', fontSize: '0.75rem', marginBottom: 4 }}>
+                Active now
+              </p>
+              <p style={{
+                fontFamily: 'Syne, sans-serif', fontSize: '1.75rem',
+                fontWeight: 800, color: 'var(--success)',
+              }}>
+                {activeCount}
               </p>
             </div>
 
-            {/* Active now */}
-            <div className="card" style={{ padding: 16, cursor: 'pointer', gridColumn: isMobile ? '1 / -1' : 'auto' }} onClick={() => setTab('active')}>
-              <div style={{ fontSize: '1.5rem', marginBottom: 6 }}>🔴</div>
-              <p style={{ color: 'var(--text-muted)', fontSize: '0.75rem', marginBottom: 4 }}>Active now</p>
-              <p style={{ fontFamily: 'Syne, sans-serif', fontSize: '1.75rem', fontWeight: 800, color: 'var(--success)' }}>
-                {activeCount}
+            {/* Joined */}
+            <div
+              className="card"
+              style={{ padding: 16, cursor: 'pointer' }}
+              onClick={() => setTab('joined')}
+            >
+              <div style={{ fontSize: '1.5rem', marginBottom: 6 }}>🤝</div>
+              <p style={{ color: 'var(--text-muted)', fontSize: '0.75rem', marginBottom: 4 }}>
+                Joined
+              </p>
+              <p style={{
+                fontFamily: 'Syne, sans-serif', fontSize: '1.75rem',
+                fontWeight: 800, color: 'var(--teal)',
+              }}>
+                {joinedCount}
               </p>
             </div>
           </div>
 
           {/* Quick actions */}
-          <div style={{ display: 'grid', gridTemplateColumns: isMobile ? '1fr' : '1fr 1fr', gap: 12, marginBottom: 24 }}>
-            <div className="card" style={{ padding: 16, cursor: 'pointer' }} onClick={() => setShowCreate(true)}>
+          <div style={{
+            display: 'grid',
+            gridTemplateColumns: isMobile ? '1fr' : '1fr 1fr',
+            gap: 12, marginBottom: 24,
+          }}>
+            <div
+              className="card"
+              style={{ padding: 16, cursor: 'pointer' }}
+              onClick={() => setShowCreate(true)}
+            >
               <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
                 <div style={{ fontSize: '2rem' }}>🎬</div>
                 <div>
-                  <h3 style={{ fontFamily: 'Syne, sans-serif', fontSize: '0.9375rem', fontWeight: 600, color: 'var(--text-primary)', marginBottom: 2 }}>New Meeting</h3>
-                  <p style={{ color: 'var(--text-secondary)', fontSize: '0.8rem' }}>Start instantly, invite anyone</p>
+                  <h3 style={{
+                    fontFamily: 'Syne, sans-serif', fontSize: '0.9375rem',
+                    fontWeight: 600, color: 'var(--text-primary)', marginBottom: 2,
+                  }}>
+                    New Meeting
+                  </h3>
+                  <p style={{ color: 'var(--text-secondary)', fontSize: '0.8rem' }}>
+                    Start instantly, invite anyone
+                  </p>
                 </div>
               </div>
             </div>
@@ -375,7 +473,12 @@ export default function Dashboard() {
               <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
                 <div style={{ fontSize: '2rem' }}>🔗</div>
                 <div style={{ flex: 1, minWidth: 0 }}>
-                  <h3 style={{ fontFamily: 'Syne, sans-serif', fontSize: '0.9375rem', fontWeight: 600, color: 'var(--text-primary)', marginBottom: 8 }}>Join by ID</h3>
+                  <h3 style={{
+                    fontFamily: 'Syne, sans-serif', fontSize: '0.9375rem',
+                    fontWeight: 600, color: 'var(--text-primary)', marginBottom: 8,
+                  }}>
+                    Join by ID
+                  </h3>
                   <div style={{ display: 'flex', gap: 6 }}>
                     <input
                       className="input"
@@ -385,7 +488,11 @@ export default function Dashboard() {
                       onChange={e => setJoinCode(e.target.value)}
                       onKeyDown={e => e.key === 'Enter' && joinMeeting()}
                     />
-                    <button className="btn-primary" style={{ padding: '6px 12px', fontSize: '0.8rem', flexShrink: 0 }} onClick={joinMeeting}>
+                    <button
+                      className="btn-primary"
+                      style={{ padding: '6px 12px', fontSize: '0.8rem', flexShrink: 0 }}
+                      onClick={joinMeeting}
+                    >
                       Join
                     </button>
                   </div>
@@ -394,9 +501,13 @@ export default function Dashboard() {
             </div>
           </div>
 
-          {/* ✅ Meetings list with proper tabs */}
+          {/* Meetings list */}
           <div>
-            <div style={{ display: 'flex', borderBottom: '1px solid var(--border)', marginBottom: 16, overflowX: 'auto' }}>
+            {/* ✅ Tabs */}
+            <div style={{
+              display: 'flex', borderBottom: '1px solid var(--border)',
+              marginBottom: 16, overflowX: 'auto',
+            }}>
               {[
                 ['all', '🗂 All'],
                 ['active', '🟢 Active'],
@@ -412,7 +523,8 @@ export default function Dashboard() {
                     fontFamily: 'Syne, sans-serif', fontWeight: 600, fontSize: '0.8rem',
                     color: tab === key ? 'var(--accent)' : 'var(--text-muted)',
                     borderBottom: `2px solid ${tab === key ? 'var(--accent)' : 'transparent'}`,
-                    marginBottom: -1, transition: 'all 0.2s', whiteSpace: 'nowrap', flexShrink: 0,
+                    marginBottom: -1, transition: 'all 0.2s',
+                    whiteSpace: 'nowrap', flexShrink: 0,
                   }}
                 >
                   {label}
@@ -425,16 +537,21 @@ export default function Dashboard() {
                 Loading your meetings…
               </div>
             ) : filteredMeetings.length === 0 ? (
-              <div style={{ textAlign: 'center', padding: '3rem', display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 12 }}>
+              <div style={{
+                textAlign: 'center', padding: '3rem',
+                display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 12,
+              }}>
                 <div style={{ fontSize: '3rem' }}>🎯</div>
                 <p style={{ color: 'var(--text-muted)', fontFamily: 'Syne, sans-serif' }}>
                   {tab === 'all' ? 'No meetings yet. Create or join your first one!' :
-                   tab === 'hosted' ? 'You haven\'t hosted any meetings yet.' :
-                   tab === 'joined' ? 'You haven\'t joined any meetings as participant.' :
+                   tab === 'hosted' ? "You haven't hosted any meetings yet." :
+                   tab === 'joined' ? "You haven't joined any meetings as a participant." :
                    tab === 'active' ? 'No active meetings right now.' :
                    'No past meetings found.'}
                 </p>
-                <button className="btn-primary" onClick={() => setShowCreate(true)}>+ New meeting</button>
+                <button className="btn-primary" onClick={() => setShowCreate(true)}>
+                  + New meeting
+                </button>
               </div>
             ) : (
               filteredMeetings.map(m => (
@@ -455,8 +572,9 @@ export default function Dashboard() {
         <div
           onClick={() => setShowCreate(false)}
           style={{
-            position: 'fixed', inset: 0, zIndex: 100, display: 'flex', alignItems: 'center',
-            justifyContent: 'center', background: 'rgba(0,0,0,0.7)', backdropFilter: 'blur(8px)', padding: '1rem',
+            position: 'fixed', inset: 0, zIndex: 100,
+            display: 'flex', alignItems: 'center', justifyContent: 'center',
+            background: 'rgba(0,0,0,0.7)', backdropFilter: 'blur(8px)', padding: '1rem',
           }}
         >
           <div
@@ -464,13 +582,22 @@ export default function Dashboard() {
             style={{ width: '100%', maxWidth: 420, padding: 28 }}
             onClick={e => e.stopPropagation()}
           >
-            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 20 }}>
-              <h2 style={{ fontFamily: 'Syne, sans-serif', fontSize: '1.25rem', fontWeight: 700, color: 'var(--text-primary)' }}>
+            <div style={{
+              display: 'flex', alignItems: 'center',
+              justifyContent: 'space-between', marginBottom: 20,
+            }}>
+              <h2 style={{
+                fontFamily: 'Syne, sans-serif', fontSize: '1.25rem',
+                fontWeight: 700, color: 'var(--text-primary)',
+              }}>
                 Create meeting
               </h2>
               <button
                 onClick={() => setShowCreate(false)}
-                style={{ background: 'none', border: 'none', cursor: 'pointer', color: 'var(--text-muted)', fontSize: '1.5rem', lineHeight: 1 }}
+                style={{
+                  background: 'none', border: 'none', cursor: 'pointer',
+                  color: 'var(--text-muted)', fontSize: '1.5rem', lineHeight: 1,
+                }}
               >
                 ×
               </button>
@@ -497,10 +624,20 @@ export default function Dashboard() {
                 />
               </div>
               <div style={{ display: 'flex', gap: 10, marginTop: 4 }}>
-                <button type="button" className="btn-ghost" style={{ flex: 1 }} onClick={() => setShowCreate(false)}>
+                <button
+                  type="button"
+                  className="btn-ghost"
+                  style={{ flex: 1 }}
+                  onClick={() => setShowCreate(false)}
+                >
                   Cancel
                 </button>
-                <button type="submit" className="btn-primary" style={{ flex: 1 }} disabled={creating}>
+                <button
+                  type="submit"
+                  className="btn-primary"
+                  style={{ flex: 1 }}
+                  disabled={creating}
+                >
                   {creating ? 'Creating…' : 'Start meeting →'}
                 </button>
               </div>
