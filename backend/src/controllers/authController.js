@@ -74,7 +74,6 @@ exports.login = async (req, res, next) => {
 
     const { accessToken, refreshToken } = generateTokens(user._id);
 
-    // Store refresh token (keep only last 5)
     user.refreshTokens.push({ token: refreshToken });
     if (user.refreshTokens.length > 5) {
       user.refreshTokens = user.refreshTokens.slice(-5);
@@ -106,20 +105,16 @@ exports.forgotPassword = async (req, res, next) => {
     const { email } = req.body;
     const user = await User.findOne({ email });
     
-    // Return 200 even if user not found to prevent email enumeration attacks
     if (!user) {
-      return res.status(200).json({ message: 'If that email is registered, an OTP has been sent.' });
+      return res.status(200).json({ message: 'Email service verified. If that email is registered, an OTP has been sent.' });
     }
 
-    // Generate 6-digit OTP
     const otp = crypto.randomInt(100000, 999999).toString();
     
-    // Save OTP and expiry (10 minutes)
     user.resetPasswordOtp = otp;
     user.resetPasswordOtpExpires = Date.now() + 10 * 60 * 1000;
     await user.save({ validateBeforeSave: false });
 
-    // Configure Nodemailer Transporter using your new credentials
     const transporter = nodemailer.createTransport({
       host: process.env.SMTP_HOST || 'smtp.gmail.com',
       port: process.env.SMTP_PORT || 587,
@@ -129,6 +124,15 @@ exports.forgotPassword = async (req, res, next) => {
         pass: process.env.EMAIL_PASS,
       },
     });
+
+    // --- NEW: VERIFY EMAIL SERVICE ---
+    try {
+      await transporter.verify();
+      logger.info('✅ SMTP Connection Verified: Email service is working properly.');
+    } catch (verifyError) {
+      logger.error('❌ SMTP Verification Failed: Email service is NOT working.', verifyError);
+      return res.status(500).json({ error: 'Email service is down. Please check backend SMTP credentials.' });
+    }
 
     const mailOptions = {
       from: process.env.EMAIL_FROM || '"NexMeet" <more96899@gmail.com>',
@@ -145,9 +149,9 @@ exports.forgotPassword = async (req, res, next) => {
     };
 
     await transporter.sendMail(mailOptions);
-    logger.info(`Password reset OTP sent to: ${email}`);
+    logger.info(`✅ Password reset OTP sent successfully to: ${email}`);
 
-    res.status(200).json({ message: 'If that email is registered, an OTP has been sent.' });
+    res.status(200).json({ message: 'Email service is working properly! OTP has been sent.' });
   } catch (err) {
     logger.error('SMTP Error:', err);
     next(err);
