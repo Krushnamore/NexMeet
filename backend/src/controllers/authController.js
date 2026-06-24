@@ -2,6 +2,8 @@ const jwt = require('jsonwebtoken');
 const { validationResult } = require('express-validator');
 const User = require('../models/User');
 const logger = require('../utils/logger');
+const nodemailer = require('nodemailer');
+const crypto = require('crypto');
 
 const generateTokens = (userId) => {
   const accessToken = jwt.sign(
@@ -93,6 +95,93 @@ exports.login = async (req, res, next) => {
   }
 };
 
+// Forgot Password - Send OTP via Email
+exports.forgotPassword = async (req, res, next) => {
+  try {
+    const errors = validationResult(req);
+    if (!errors.isEmpty()) {
+      return res.status(400).json({ errors: errors.array() });
+    }
+
+    const { email } = req.body;
+    const user = await User.findOne({ email });
+    
+    // Return 200 even if user not found to prevent email enumeration attacks
+    if (!user) {
+      return res.status(200).json({ message: 'If that email is registered, an OTP has been sent.' });
+    }
+
+    // Generate 6-digit OTP
+    const otp = crypto.randomInt(100000, 999999).toString();
+    
+    // Save OTP and expiry (10 minutes)
+    user.resetPasswordOtp = otp;
+    user.resetPasswordOtpExpires = Date.now() + 10 * 60 * 1000;
+    await user.save({ validateBeforeSave: false });
+
+    // Configure Nodemailer Transporter using your new credentials
+    const transporter = nodemailer.createTransport({
+      host: process.env.SMTP_HOST || 'smtp.gmail.com',
+      port: process.env.SMTP_PORT || 587,
+      secure: process.env.SMTP_PORT == 465, 
+      auth: {
+        user: process.env.EMAIL_USER,
+        pass: process.env.EMAIL_PASS,
+      },
+    });
+
+    const mailOptions = {
+      from: process.env.EMAIL_FROM || '"NexMeet" <more96899@gmail.com>',
+      to: user.email,
+      subject: 'Password Reset OTP - NexMeet',
+      html: `
+        <div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto;">
+          <h2>Password Reset Request</h2>
+          <p>Your One-Time Password (OTP) for resetting your NexMeet password is:</p>
+          <h1 style="color: #3b82f6; letter-spacing: 5px; font-size: 32px; background: #f3f4f6; padding: 15px; text-align: center; border-radius: 8px;">${otp}</h1>
+          <p>This OTP is valid for <strong>10 minutes</strong>. If you did not request this password reset, please ignore this email.</p>
+        </div>
+      `,
+    };
+
+    await transporter.sendMail(mailOptions);
+    logger.info(`Password reset OTP sent to: ${email}`);
+
+    res.status(200).json({ message: 'If that email is registered, an OTP has been sent.' });
+  } catch (err) {
+    logger.error('SMTP Error:', err);
+    next(err);
+  }
+};
+
+// Reset Password - Verify OTP and update
+exports.resetPassword = async (req, res, next) => {
+  try {
+    const errors = validationResult(req);
+    if (!errors.isEmpty()) {
+      return res.status(400).json({ errors: errors.array() });
+    }
+
+    const { email, otp, newPassword } = req.body;
+
+    const user = await User.findOne({ email }).select('+resetPasswordOtp +resetPasswordOtpExpires +password');
+
+    if (!user || user.resetPasswordOtp !== otp || user.resetPasswordOtpExpires < Date.now()) {
+      return res.status(400).json({ error: 'Invalid or expired OTP' });
+    }
+
+    user.password = newPassword;
+    user.resetPasswordOtp = undefined;
+    user.resetPasswordOtpExpires = undefined;
+    await user.save();
+
+    logger.info(`Password reset successful for: ${email}`);
+    res.status(200).json({ message: 'Password has been reset successfully. You can now login.' });
+  } catch (err) {
+    next(err);
+  }
+};
+
 // Refresh token
 exports.refreshToken = async (req, res, next) => {
   try {
@@ -118,7 +207,6 @@ exports.refreshToken = async (req, res, next) => {
 
     const { accessToken, refreshToken: newRefreshToken } = generateTokens(user._id);
 
-    // Replace old refresh token
     user.refreshTokens = user.refreshTokens.filter(t => t.token !== refreshToken);
     user.refreshTokens.push({ token: newRefreshToken });
     await user.save();

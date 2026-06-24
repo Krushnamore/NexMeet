@@ -22,6 +22,23 @@ router.post('/login',
   authController.login
 );
 
+// --- NEW FORGOT PASSWORD ROUTES ---
+router.post('/forgot-password',
+  [
+    body('email').isEmail().withMessage('Valid email required')
+  ],
+  authController.forgotPassword
+);
+
+router.post('/reset-password',
+  [
+    body('email').isEmail().withMessage('Valid email required'),
+    body('otp').isLength({ min: 6, max: 6 }).withMessage('Valid 6-digit OTP required'),
+    body('newPassword').isLength({ min: 8 }).withMessage('Password must be at least 8 characters')
+  ],
+  authController.resetPassword
+);
+
 router.post('/refresh', authController.refreshToken);
 router.post('/logout', auth, authController.logout);
 router.get('/me', auth, authController.getMe);

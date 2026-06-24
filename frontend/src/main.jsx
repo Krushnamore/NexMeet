@@ -8,7 +8,8 @@ import { AuthProvider, useAuth } from './contexts/AuthContext';
 import { SocketProvider } from './contexts/SocketContext';
 
 import LandingPage from './components/Auth/LandingPage';
-import LoginPage from './components/Auth/LoginPage';
+// Updated import to include the ForgotPasswordPage we added to LoginPage.jsx
+import LoginPage, { ForgotPasswordPage } from './components/Auth/LoginPage'; 
 import RegisterPage from './components/Auth/RegisterPage';
 import Dashboard from './components/Dashboard/Dashboard';
 import MeetingRoom from './components/Meeting/MeetingRoom';
@@ -42,6 +43,10 @@ function App() {
             <Route path="/" element={<PublicRoute><LandingPage /></PublicRoute>} />
             <Route path="/login" element={<PublicRoute><LoginPage /></PublicRoute>} />
             <Route path="/register" element={<PublicRoute><RegisterPage /></PublicRoute>} />
+            
+            {/* Added Forgot Password Route Here */}
+            <Route path="/forgot-password" element={<PublicRoute><ForgotPasswordPage /></PublicRoute>} />
+            
             <Route path="/dashboard" element={<PrivateRoute><Dashboard /></PrivateRoute>} />
             <Route path="/join/:meetingId?" element={<JoinMeeting />} />
             <Route path="/meeting/:meetingId" element={<PrivateRoute><MeetingRoom /></PrivateRoute>} />

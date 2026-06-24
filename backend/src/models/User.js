@@ -11,7 +11,7 @@ const userSchema = new mongoose.Schema({
   email: {
     type: String,
     required: [true, 'Email is required'],
-    unique: true, // ← this already creates the index
+    unique: true,
     lowercase: true,
     trim: true,
     match: [/^\S+@\S+\.\S+$/, 'Please provide a valid email'],
@@ -21,6 +21,14 @@ const userSchema = new mongoose.Schema({
     required: [true, 'Password is required'],
     minlength: [8, 'Password must be at least 8 characters'],
     select: false,
+  },
+  resetPasswordOtp: { 
+    type: String, 
+    select: false 
+  },
+  resetPasswordOtpExpires: { 
+    type: Date, 
+    select: false 
   },
   avatar: { type: String, default: null },
   role: { type: String, enum: ['user', 'admin'], default: 'user' },
@@ -55,10 +63,11 @@ userSchema.methods.toJSON = function() {
   const obj = this.toObject();
   delete obj.password;
   delete obj.refreshTokens;
+  delete obj.resetPasswordOtp;
+  delete obj.resetPasswordOtpExpires;
   return obj;
 };
 
-// ✅ FIXED: removed duplicate `email: 1` index (unique:true above already creates it)
 userSchema.index({ createdAt: -1 });
 
 module.exports = mongoose.model('User', userSchema);

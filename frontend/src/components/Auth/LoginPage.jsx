@@ -2,6 +2,7 @@ import { useState } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
 import { toast } from 'react-hot-toast';
 import { useAuth } from '../../contexts/AuthContext';
+import api from '../../services/api'; 
 
 const AuthLayout = ({ children, title, subtitle }) => (
   <div style={{ minHeight: '100vh', background: 'var(--bg-primary)', display: 'flex', alignItems: 'center', justifyContent: 'center', padding: '2rem' }}>
@@ -51,7 +52,12 @@ export function LoginPage() {
             onChange={e => setForm(p => ({ ...p, email: e.target.value }))} required />
         </div>
         <div>
-          <label className="label">Password</label>
+          <div className="flex justify-between items-center mb-1">
+            <label className="label mb-0">Password</label>
+            <Link to="/forgot-password" style={{ color: 'var(--accent)', fontSize: '0.8rem', textDecoration: 'none', fontWeight: 500 }}>
+              Forgot password?
+            </Link>
+          </div>
           <input className="input" type="password" placeholder="••••••••" value={form.password}
             onChange={e => setForm(p => ({ ...p, password: e.target.value }))} required />
         </div>
@@ -112,6 +118,84 @@ export function RegisterPage() {
       <p style={{ textAlign: 'center', marginTop: '1.5rem', color: 'var(--text-secondary)', fontSize: '0.875rem' }}>
         Already have an account?{' '}
         <Link to="/login" style={{ color: 'var(--accent)', textDecoration: 'none', fontWeight: 500 }}>Sign in</Link>
+      </p>
+    </AuthLayout>
+  );
+}
+
+// NEW: Forgot Password Component
+export function ForgotPasswordPage() {
+  const navigate = useNavigate();
+  const [step, setStep] = useState(1); 
+  const [loading, setLoading] = useState(false);
+  const [form, setForm] = useState({ email: '', otp: '', newPassword: '' });
+
+  const handleSendOtp = async (e) => {
+    e.preventDefault();
+    setLoading(true);
+    try {
+      await api.post('/auth/forgot-password', { email: form.email });
+      toast.success('OTP sent to your email');
+      setStep(2);
+    } catch (err) {
+      toast.error(err.response?.data?.error || 'Failed to send OTP');
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const handleResetPassword = async (e) => {
+    e.preventDefault();
+    if (form.newPassword.length < 8) return toast.error('Password must be at least 8 characters');
+    setLoading(true);
+    try {
+      const res = await api.post('/auth/reset-password', { 
+        email: form.email, 
+        otp: form.otp, 
+        newPassword: form.newPassword 
+      });
+      toast.success(res.data.message);
+      navigate('/login');
+    } catch (err) {
+      toast.error(err.response?.data?.error || 'Failed to reset password');
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  return (
+    <AuthLayout title="Reset Password" subtitle={step === 1 ? "Enter your email to receive an OTP" : "Enter the OTP sent to your email"}>
+      {step === 1 ? (
+        <form onSubmit={handleSendOtp} className="flex flex-col gap-4">
+          <div>
+            <label className="label">Email Address</label>
+            <input className="input" type="email" placeholder="you@example.com" value={form.email}
+              onChange={e => setForm(p => ({ ...p, email: e.target.value }))} required />
+          </div>
+          <button className="btn-primary w-full mt-2" type="submit" disabled={loading}>
+            {loading ? 'Sending OTP…' : 'Send OTP →'}
+          </button>
+        </form>
+      ) : (
+        <form onSubmit={handleResetPassword} className="flex flex-col gap-4">
+          <div>
+            <label className="label">6-Digit OTP</label>
+            <input className="input" type="text" placeholder="123456" maxLength={6} value={form.otp}
+              onChange={e => setForm(p => ({ ...p, otp: e.target.value }))} required />
+          </div>
+          <div>
+            <label className="label">New Password</label>
+            <input className="input" type="password" placeholder="Min. 8 characters" value={form.newPassword}
+              onChange={e => setForm(p => ({ ...p, newPassword: e.target.value }))} required minLength={8} />
+          </div>
+          <button className="btn-primary w-full mt-2" type="submit" disabled={loading}>
+            {loading ? 'Resetting…' : 'Reset Password →'}
+          </button>
+        </form>
+      )}
+      <p style={{ textAlign: 'center', marginTop: '1.5rem', color: 'var(--text-secondary)', fontSize: '0.875rem' }}>
+        Remember your password?{' '}
+        <Link to="/login" style={{ color: 'var(--accent)', textDecoration: 'none', fontWeight: 500 }}>Back to Login</Link>
       </p>
     </AuthLayout>
   );
