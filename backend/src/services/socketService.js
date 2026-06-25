@@ -6,16 +6,21 @@ const logger = require('../utils/logger');
 
 const meetingRooms = new Map();
 const socketUsers = new Map();
-const userSockets = new Map(); // ✅ O(1) Lookup Map for quick routing
 
 const setupSocketHandlers = (io) => {
 
   io.use(async (socket, next) => {
     try {
-      const token = socket.handshake.auth.token || socket.handshake.query.token;
+      // ✅ FIX 3: Check multiple locations for the auth token just in case the frontend sends it differently
+      const token = socket.handshake.auth?.token || 
+                    socket.handshake.query?.token || 
+                    (socket.handshake.headers?.authorization && socket.handshake.headers.authorization.split(' ')[1]);
+
       if (!token) return next(new Error('Authentication required'));
+      
       const decoded = jwt.verify(token, process.env.JWT_SECRET);
       const user = await User.findById(decoded.userId).select('name email avatar');
+      
       if (!user) return next(new Error('User not found'));
       socket.user = user;
       next();
@@ -33,13 +38,11 @@ const setupSocketHandlers = (io) => {
         if (!meetingRooms.has(meetingId)) meetingRooms.set(meetingId, new Set());
         meetingRooms.get(meetingId).add(socket.id);
         
-        // Track the user
         socketUsers.set(socket.id, {
           userId: String(socket.user._id),
           userName: socket.user.name,
           meetingId,
         });
-        userSockets.set(String(socket.user._id), socket.id); // ✅ Fast lookup entry
 
         socket.to(meetingId).emit('participant:joined', {
           userId: String(socket.user._id),
@@ -79,12 +82,13 @@ const setupSocketHandlers = (io) => {
         if (isPrivate) {
           const recipientSocket = findSocketByUserId(String(recipientId), meetingId);
           if (recipientSocket) io.to(recipientSocket).emit('chat:message', msgData);
-          socket.emit('chat:message', msgData);
+          socket.emit('chat:message', msgData); // Send back to self
         } else {
-          socket.to(meetingId).emit('chat:message', msgData);
+          // ✅ FIX 2: Use io.to() instead of socket.to() so the sender ALSO receives their own chat message!
+          io.to(meetingId).emit('chat:message', msgData);
         }
 
-        // ✅ Await DB save to ensure data consistency
+        // Save to Database
         const meeting = await Meeting.findOne({ meetingId });
         if (meeting) {
           await ChatMessage.create({
@@ -145,8 +149,11 @@ const setupSocketHandlers = (io) => {
         const hostSocket = findSocketByUserId(String(meeting.host), meetingId);
         const payload = { userId: requesterId, name: socket.user.name };
 
-        if (hostSocket) io.to(hostSocket).emit('screenshare:request', payload);
-        else socket.to(meetingId).emit('screenshare:request', payload);
+        if (hostSocket) {
+          io.to(hostSocket).emit('screenshare:request', payload);
+        } else {
+          socket.to(meetingId).emit('screenshare:request', payload);
+        }
       } catch (err) { logger.error('screenshare:request DB error:', err); }
     });
 
@@ -185,6 +192,7 @@ const setupSocketHandlers = (io) => {
     });
 
     socket.on('disconnect', (reason) => {
+      logger.info(`Socket disconnected: ${socket.id} (${reason})`);
       const userInfo = socketUsers.get(socket.id);
       if (userInfo) handleLeave(socket, userInfo.meetingId, io);
     });
@@ -199,22 +207,23 @@ function handleLeave(socket, meetingId, io) {
     if (meetingRooms.get(meetingId).size === 0) meetingRooms.delete(meetingId);
   }
   socketUsers.delete(socket.id);
-  userSockets.delete(String(socket.user?._id)); // Clean up fast lookup
 
   socket.to(meetingId).emit('participant:left', {
     userId: String(socket.user?._id),
     name: socket.user?.name,
   });
+  logger.info(`${socket.user?.name} left room ${meetingId}`);
 }
 
+// ✅ FIX 1: Reverted back to the highly reliable loop method to prevent race conditions on tab refreshes
 function findSocketByUserId(userId, meetingId) {
   if (!userId) return null;
-  // ✅ O(1) Instant lookup instead of O(N) looping
-  const socketId = userSockets.get(String(userId));
-  if (!socketId) return null;
-  
-  const info = socketUsers.get(socketId);
-  if (info && info.meetingId === meetingId) return socketId;
+  const userIdStr = String(userId);
+  for (const [socketId, info] of socketUsers.entries()) {
+    if (info.userId === userIdStr && info.meetingId === meetingId) {
+      return socketId;
+    }
+  }
   return null;
 }
 
