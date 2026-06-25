@@ -18,7 +18,6 @@ api.interceptors.request.use(
   (error) => Promise.reject(error)
 );
 
-// Response interceptor with token refresh
 let isRefreshing = false;
 let failedQueue = [];
 
@@ -30,6 +29,7 @@ const processQueue = (error, token = null) => {
   failedQueue = [];
 };
 
+// Response interceptor with token refresh
 api.interceptors.response.use(
   (response) => response,
   async (error) => {
@@ -51,7 +51,9 @@ api.interceptors.response.use(
       const refreshToken = localStorage.getItem('refreshToken');
       if (!refreshToken) {
         isRefreshing = false;
+        // ✅ FIX: Fully clear all auth data before redirecting to avoid render errors
         localStorage.removeItem('accessToken');
+        localStorage.removeItem('user');
         window.location.href = '/login';
         return Promise.reject(error);
       }
@@ -72,8 +74,10 @@ api.interceptors.response.use(
         return api(originalRequest);
       } catch (refreshError) {
         processQueue(refreshError, null);
+        // ✅ FIX: Clean up everything on refresh failure
         localStorage.removeItem('accessToken');
         localStorage.removeItem('refreshToken');
+        localStorage.removeItem('user');
         window.location.href = '/login';
         return Promise.reject(refreshError);
       } finally {

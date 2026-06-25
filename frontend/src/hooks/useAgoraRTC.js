@@ -116,7 +116,7 @@ export const useAgoraRTC = () => {
     let videoTrack = null;
     const errors = { audio: null, video: null };
 
-    // ✅ Create mic and camera in PARALLEL for faster startup
+    // Create mic and camera in PARALLEL for faster startup
     const [audioResult, videoResult] = await Promise.allSettled([
       AgoraRTC.createMicrophoneAudioTrack({
         encoderConfig: {
@@ -229,21 +229,12 @@ export const useAgoraRTC = () => {
       );
     }
 
-    // ✅ Fixed values only — no min/ideal objects that cause browser errors
-    const screenTrack = await AgoraRTC.createScreenVideoTrack(
-      {
-        encoderConfig: {
-          width: 1280,
-          height: 720,
-          frameRate: 15,
-          bitrateMax: 1000,
-        },
-      },
-      'disable'
-    );
+    // ✅ FIX: Use flexible default configurations to prevent browser constraint errors
+    const screenTrack = await AgoraRTC.createScreenVideoTrack({}, 'auto');
 
     const videoTrack = localTracksRef.current.video;
     if (videoTrack) {
+      // Unpublish camera video when screen sharing starts
       try { await client.unpublish(videoTrack); } catch {}
     }
 
@@ -286,12 +277,13 @@ export const useAgoraRTC = () => {
     }
 
     const videoTrack = localTracksRef.current.video;
-    if (videoTrack) {
+    if (videoTrack && !isVideoOff) {
+      // Republish camera video if it wasn't turned off before sharing
       try { await client.publish(videoTrack); } catch {}
     }
 
     setIsScreenSharing(false);
-  }, []);
+  }, [isVideoOff]);
 
   return {
     join,

@@ -6,6 +6,7 @@ const logger = require('../utils/logger');
 
 const meetingRooms = new Map();
 const socketUsers = new Map();
+const userSockets = new Map(); // ✅ O(1) Lookup Map for quick routing
 
 const setupSocketHandlers = (io) => {
 
@@ -31,11 +32,15 @@ const setupSocketHandlers = (io) => {
         socket.join(meetingId);
         if (!meetingRooms.has(meetingId)) meetingRooms.set(meetingId, new Set());
         meetingRooms.get(meetingId).add(socket.id);
+        
+        // Track the user
         socketUsers.set(socket.id, {
           userId: String(socket.user._id),
           userName: socket.user.name,
           meetingId,
         });
+        userSockets.set(String(socket.user._id), socket.id); // ✅ Fast lookup entry
+
         socket.to(meetingId).emit('participant:joined', {
           userId: String(socket.user._id),
           name: socket.user.name,
@@ -79,22 +84,20 @@ const setupSocketHandlers = (io) => {
           socket.to(meetingId).emit('chat:message', msgData);
         }
 
-        Meeting.findOne({ meetingId })
-          .then(meeting => {
-            if (!meeting) return;
-            return ChatMessage.create({
-              meeting: meeting._id,
-              sender: socket.user._id,
-              senderName: socket.user.name,
-              content: trimmedContent,
-              isPrivate,
-              recipient: recipientId || null,
-              recipientName: recipientName || null,
-              breakoutRoomId: breakoutRoomId || null,
-            });
-          })
-          .catch(err => logger.error('ChatMessage DB save failed:', err.message));
-
+        // ✅ Await DB save to ensure data consistency
+        const meeting = await Meeting.findOne({ meetingId });
+        if (meeting) {
+          await ChatMessage.create({
+            meeting: meeting._id,
+            sender: socket.user._id,
+            senderName: socket.user.name,
+            content: trimmedContent,
+            isPrivate,
+            recipient: recipientId || null,
+            recipientName: recipientName || null,
+            breakoutRoomId: breakoutRoomId || null,
+          });
+        }
       } catch (err) {
         logger.error('chat:message error:', err);
         socket.emit('chat:error', { error: 'Failed to send message' });
@@ -118,17 +121,11 @@ const setupSocketHandlers = (io) => {
     });
 
     socket.on('media:audio', ({ meetingId, muted }) => {
-      socket.to(meetingId).emit('media:audio', {
-        userId: String(socket.user._id),
-        muted,
-      });
+      socket.to(meetingId).emit('media:audio', { userId: String(socket.user._id), muted });
     });
 
     socket.on('media:video', ({ meetingId, off }) => {
-      socket.to(meetingId).emit('media:video', {
-        userId: String(socket.user._id),
-        off,
-      });
+      socket.to(meetingId).emit('media:video', { userId: String(socket.user._id), off });
     });
 
     socket.on('media:screenShare', ({ meetingId, sharing }) => {
@@ -139,57 +136,30 @@ const setupSocketHandlers = (io) => {
       });
     });
 
-    // Participant requests screen share → find host and notify
-    socket.on('screenshare:request', ({ meetingId }) => {
-      const requesterId = String(socket.user._id);
-      const requesterName = socket.user.name;
-      logger.info(`[screenshare:request] from ${requesterName} (${requesterId}) in room ${meetingId}`);
+    socket.on('screenshare:request', async ({ meetingId }) => {
+      try {
+        const requesterId = String(socket.user._id);
+        const meeting = await Meeting.findOne({ meetingId });
+        if (!meeting) return;
+        
+        const hostSocket = findSocketByUserId(String(meeting.host), meetingId);
+        const payload = { userId: requesterId, name: socket.user.name };
 
-      Meeting.findOne({ meetingId })
-        .then(meeting => {
-          if (!meeting) return;
-          const hostIdStr = String(meeting.host);
-          const hostSocket = findSocketByUserId(hostIdStr, meetingId);
-          logger.info(`[screenshare:request] host=${hostIdStr}, hostSocket=${hostSocket}`);
-
-          const payload = { userId: requesterId, name: requesterName };
-
-          if (hostSocket) {
-            io.to(hostSocket).emit('screenshare:request', payload);
-          } else {
-            // Fallback: broadcast to room, host will filter
-            socket.to(meetingId).emit('screenshare:request', payload);
-          }
-        })
-        .catch(err => logger.error('screenshare:request DB error:', err));
+        if (hostSocket) io.to(hostSocket).emit('screenshare:request', payload);
+        else socket.to(meetingId).emit('screenshare:request', payload);
+      } catch (err) { logger.error('screenshare:request DB error:', err); }
     });
 
-    // Host approves → find participant socket and notify
     socket.on('screenshare:approved', ({ meetingId, userId }) => {
-      const userIdStr = String(userId);
-      logger.info(`[screenshare:approved] host approving userId=${userIdStr} in room ${meetingId}`);
-
-      const targetSocket = findSocketByUserId(userIdStr, meetingId);
-      logger.info(`[screenshare:approved] targetSocket=${targetSocket}`);
-
-      if (targetSocket) {
-        io.to(targetSocket).emit('screenshare:approved', { userId: userIdStr });
-      } else {
-        // Fallback: broadcast to room, participant filters by userId
-        logger.warn(`[screenshare:approved] no socket found for ${userIdStr}, broadcasting to room`);
-        io.to(meetingId).emit('screenshare:approved', { userId: userIdStr });
-      }
+      const targetSocket = findSocketByUserId(String(userId), meetingId);
+      if (targetSocket) io.to(targetSocket).emit('screenshare:approved', { userId: String(userId) });
+      else io.to(meetingId).emit('screenshare:approved', { userId: String(userId) });
     });
 
-    // Host denies → notify participant
     socket.on('screenshare:denied', ({ meetingId, userId }) => {
-      const userIdStr = String(userId);
-      const targetSocket = findSocketByUserId(userIdStr, meetingId);
-      if (targetSocket) {
-        io.to(targetSocket).emit('screenshare:denied', { userId: userIdStr });
-      } else {
-        io.to(meetingId).emit('screenshare:denied', { userId: userIdStr });
-      }
+      const targetSocket = findSocketByUserId(String(userId), meetingId);
+      if (targetSocket) io.to(targetSocket).emit('screenshare:denied', { userId: String(userId) });
+      else io.to(meetingId).emit('screenshare:denied', { userId: String(userId) });
     });
 
     socket.on('host:mute', ({ meetingId, targetUserId }) => {
@@ -214,16 +184,7 @@ const setupSocketHandlers = (io) => {
       io.to(meetingId).emit('breakout:ended');
     });
 
-    socket.on('recording:started', ({ meetingId }) => {
-      socket.to(meetingId).emit('recording:started', { startedBy: socket.user.name });
-    });
-
-    socket.on('recording:stopped', ({ meetingId }) => {
-      socket.to(meetingId).emit('recording:stopped');
-    });
-
     socket.on('disconnect', (reason) => {
-      logger.info(`Socket disconnected: ${socket.id} (${reason})`);
       const userInfo = socketUsers.get(socket.id);
       if (userInfo) handleLeave(socket, userInfo.meetingId, io);
     });
@@ -238,21 +199,22 @@ function handleLeave(socket, meetingId, io) {
     if (meetingRooms.get(meetingId).size === 0) meetingRooms.delete(meetingId);
   }
   socketUsers.delete(socket.id);
+  userSockets.delete(String(socket.user?._id)); // Clean up fast lookup
+
   socket.to(meetingId).emit('participant:left', {
     userId: String(socket.user?._id),
     name: socket.user?.name,
   });
-  logger.info(`${socket.user?.name} left room ${meetingId}`);
 }
 
 function findSocketByUserId(userId, meetingId) {
   if (!userId) return null;
-  const userIdStr = String(userId);
-  for (const [socketId, info] of socketUsers.entries()) {
-    if (info.userId === userIdStr && info.meetingId === meetingId) {
-      return socketId;
-    }
-  }
+  // ✅ O(1) Instant lookup instead of O(N) looping
+  const socketId = userSockets.get(String(userId));
+  if (!socketId) return null;
+  
+  const info = socketUsers.get(socketId);
+  if (info && info.meetingId === meetingId) return socketId;
   return null;
 }
 

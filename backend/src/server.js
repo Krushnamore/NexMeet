@@ -19,6 +19,10 @@ const agoraRoutes = require('./routes/agora');
 const setupSocketHandlers = require('./services/socketService');
 
 const app = express();
+
+// ✅ CRITICAL FIX: Trust reverse proxy so rate limiter uses real user IP, not Render's IP
+app.set('trust proxy', 1);
+
 const server = http.createServer(app);
 
 // ✅ Allowed origins — no duplicates
@@ -34,7 +38,6 @@ if (process.env.FRONTEND_URL && !allowedOrigins.includes(process.env.FRONTEND_UR
 
 const corsOptions = {
   origin: function (origin, callback) {
-    // Allow requests with no origin (Postman, mobile apps, curl)
     if (!origin) return callback(null, true);
     if (allowedOrigins.includes(origin)) {
       callback(null, true);
@@ -68,7 +71,6 @@ app.use(helmet({
 app.use(compression());
 app.use(morgan('combined', { stream: { write: (msg) => logger.info(msg.trim()) } }));
 
-// ✅ Handle preflight for ALL routes before anything else
 app.options('*', cors(corsOptions));
 app.use(cors(corsOptions));
 
@@ -117,9 +119,7 @@ app.use((req, res) => {
 app.use((err, req, res, next) => {
   logger.error(`Error: ${err.message}`, { stack: err.stack });
   res.status(err.status || 500).json({
-    error: process.env.NODE_ENV === 'production'
-      ? 'Internal server error'
-      : err.message,
+    error: process.env.NODE_ENV === 'production' ? 'Internal server error' : err.message,
   });
 });
 
@@ -142,8 +142,6 @@ const PORT = process.env.PORT || 5000;
 connectDB().then(() => {
   server.listen(PORT, () => {
     logger.info(`NexMeet backend running on port ${PORT}`);
-    logger.info(`Environment: ${process.env.NODE_ENV || 'development'}`);
-    logger.info(`Allowed origins: ${allowedOrigins.join(', ')}`);
   });
 });
 
