@@ -42,6 +42,12 @@ export default function MeetingRoom() {
   const agoraRef = useRef(agora);
   agoraRef.current = agora;
 
+  // ✅ FIX 1: Use refs to prevent "Stale Closures" inside socket event listeners
+  const userRef = useRef(user);
+  const meetingRef = useRef(meeting);
+  useEffect(() => { userRef.current = user; }, [user]);
+  useEffect(() => { meetingRef.current = meeting; }, [meeting]);
+
   useEffect(() => {
     const handleResize = () => setIsMobile(window.innerWidth < 768);
     window.addEventListener('resize', handleResize);
@@ -84,148 +90,148 @@ export default function MeetingRoom() {
     const token = localStorage.getItem('accessToken');
     const socket = connect(token);
     socketRef.current = socket;
-    socket.emit('meeting:join', { meetingId });
 
-    socket.on('participant:joined', ({ userId, name }) => {
-      const uid = String(userId);
-      setParticipants(prev => {
-        if (prev.find(p => p.userId === uid)) return prev;
-        return [...prev, { userId: uid, name, isLocal: false, isMuted: false, isVideoOff: false }];
-      });
-      toast(`${name} joined`, { icon: '👋', duration: 2000 });
-    });
+    // ✅ FIX 2: Ensure we automatically re-join the room if the socket reconnects
+    const joinMeetingRoom = () => {
+      socket.emit('meeting:join', { meetingId });
+    };
+    
+    if (socket.connected) joinMeetingRoom();
+    socket.on('connect', joinMeetingRoom);
 
-    socket.on('participant:left', ({ userId }) => {
-      setParticipants(prev => prev.filter(p => p.userId !== String(userId)));
-    });
-
-    socket.on('participant:removed', ({ userId }) => {
-      if (String(userId) === String(user?._id)) {
-        toast.error('You were removed from the meeting');
-        navigate('/dashboard');
-      } else {
+    // ✅ FIX 3: Bind handlers strictly by name so cleanup doesn't destroy other components' listeners
+    const socketHandlers = {
+      'participant:joined': ({ userId, name }) => {
+        const uid = String(userId);
+        setParticipants(prev => {
+          if (prev.find(p => p.userId === uid)) return prev;
+          return [...prev, { userId: uid, name, isLocal: false, isMuted: false, isVideoOff: false }];
+        });
+        toast(`${name} joined`, { icon: '👋', duration: 2000 });
+      },
+      'participant:left': ({ userId }) => {
         setParticipants(prev => prev.filter(p => p.userId !== String(userId)));
-      }
-    });
-
-    socket.on('host:kicked', () => {
-      toast.error('You were removed by the host');
-      navigate('/dashboard');
-    });
-
-    socket.on('meeting:ended', () => {
-      toast('Meeting ended by host', { icon: '🏁' });
-      navigate('/dashboard');
-    });
-
-    socket.on('media:audio', ({ userId, muted }) => {
-      setParticipants(prev => prev.map(p =>
-        p.userId === String(userId) ? { ...p, isMuted: muted } : p
-      ));
-    });
-
-    socket.on('media:video', ({ userId, off }) => {
-      setParticipants(prev => prev.map(p =>
-        p.userId === String(userId) ? { ...p, isVideoOff: off } : p
-      ));
-    });
-
-    socket.on('hand:raise', ({ userId, raised, name }) => {
-      setParticipants(prev => prev.map(p =>
-        p.userId === String(userId) ? { ...p, isHandRaised: raised } : p
-      ));
-      if (raised) toast(`${name} raised hand`, { icon: '✋', duration: 3000 });
-    });
-
-    socket.on('reaction', ({ userId, emoji }) => {
-      const uid = String(userId);
-      setReactions(prev => ({ ...prev, [uid]: emoji }));
-      setTimeout(() => {
-        setReactions(prev => { const n = { ...prev }; delete n[uid]; return n; });
-      }, REACTIONS_TIMEOUT);
-    });
-
-    // ── Screen share: host receives request ──────────────────
-    socket.on('screenshare:request', ({ userId, name }) => {
-      const uid = String(userId);
-      const currentIsHost = String(meeting?.host?._id || meeting?.host) === String(user?._id);
-      if (currentIsHost) {
-        setScreenShareRequests(prev => [
-          ...prev.filter(r => r.userId !== uid),
-          { userId: uid, name },
-        ]);
-        toast(`${name} wants to share screen`, { icon: '🖥️', duration: 6000 });
-      }
-    });
-
-    // ── Screen share: participant receives approval ───────────
-    socket.on('screenshare:approved', ({ userId }) => {
-      const incomingId = String(userId);
-      const myId = String(user?._id);
-      console.log('[screenshare:approved] incoming:', incomingId, 'mine:', myId);
-
-      if (incomingId === myId) {
-        // ✅ Check mobile support first
-        if (!navigator.mediaDevices?.getDisplayMedia) {
-          toast.error('Screen sharing is not supported on mobile browsers. Use desktop Chrome/Edge/Firefox.', { duration: 5000 });
-          return;
+      },
+      'participant:removed': ({ userId }) => {
+        if (String(userId) === String(userRef.current?._id)) {
+          toast.error('You were removed from the meeting');
+          navigate('/dashboard');
+        } else {
+          setParticipants(prev => prev.filter(p => p.userId !== String(userId)));
         }
+      },
+      'host:kicked': () => {
+        toast.error('You were removed by the host');
+        navigate('/dashboard');
+      },
+      'meeting:ended': () => {
+        toast('Meeting ended by host', { icon: '🏁' });
+        navigate('/dashboard');
+      },
+      'media:audio': ({ userId, muted }) => {
+        setParticipants(prev => prev.map(p =>
+          p.userId === String(userId) ? { ...p, isMuted: muted } : p
+        ));
+      },
+      'media:video': ({ userId, off }) => {
+        setParticipants(prev => prev.map(p =>
+          p.userId === String(userId) ? { ...p, isVideoOff: off } : p
+        ));
+      },
+      'hand:raise': ({ userId, raised, name }) => {
+        setParticipants(prev => prev.map(p =>
+          p.userId === String(userId) ? { ...p, isHandRaised: raised } : p
+        ));
+        // Don't show toast if it's my own hand
+        if (raised && String(userId) !== String(userRef.current?._id)) {
+          toast(`${name} raised hand`, { icon: '✋', duration: 3000 });
+        }
+      },
+      'reaction': ({ userId, emoji }) => {
+        const uid = String(userId);
+        setReactions(prev => ({ ...prev, [uid]: emoji }));
+        setTimeout(() => {
+          setReactions(prev => { const n = { ...prev }; delete n[uid]; return n; });
+        }, REACTIONS_TIMEOUT);
+      },
+      'screenshare:request': ({ userId, name }) => {
+        const uid = String(userId);
+        // Using refs here bypasses the stale closure issue completely
+        const m = meetingRef.current;
+        const u = userRef.current;
+        const currentIsHost = String(m?.host?._id || m?.host) === String(u?._id);
+        
+        if (currentIsHost) {
+          setScreenShareRequests(prev => [
+            ...prev.filter(r => r.userId !== uid),
+            { userId: uid, name },
+          ]);
+          toast(`${name} wants to share screen`, { icon: '🖥️', duration: 6000 });
+        }
+      },
+      'screenshare:approved': ({ userId }) => {
+        const incomingId = String(userId);
+        const myId = String(userRef.current?._id);
 
-        toast.success('Approved! Select a window to share.');
-        setTimeout(async () => {
-          try {
-            await agoraRef.current.startScreenShare();
-            socketRef.current?.emit('media:screenShare', { meetingId, sharing: true });
-            toast.success('Screen sharing started ✅');
-          } catch (err) {
-            console.error('startScreenShare error:', err);
-            if (err.name === 'NotAllowedError' || err.message?.toLowerCase().includes('cancel')) {
-              toast.error('Screen share cancelled — you closed the dialog.');
-            } else if (err.name === 'NotSupportedError') {
-              toast.error('Screen sharing not supported on this browser.');
-            } else {
-              toast.error('Screen share failed: ' + err.message);
-            }
+        if (incomingId === myId) {
+          if (!navigator.mediaDevices?.getDisplayMedia) {
+            toast.error('Screen sharing is not supported on mobile browsers. Use desktop Chrome/Edge/Firefox.', { duration: 5000 });
+            return;
           }
-        }, 300);
+
+          toast.success('Approved! Select a window to share.');
+          setTimeout(async () => {
+            try {
+              await agoraRef.current.startScreenShare();
+              socket.emit('media:screenShare', { meetingId, sharing: true });
+              toast.success('Screen sharing started ✅');
+            } catch (err) {
+              console.error('startScreenShare error:', err);
+              if (err.name === 'NotAllowedError' || err.message?.toLowerCase().includes('cancel')) {
+                toast.error('Screen share cancelled — you closed the dialog.');
+              } else if (err.name === 'NotSupportedError') {
+                toast.error('Screen sharing not supported on this browser.');
+              } else {
+                toast.error('Screen share failed: ' + err.message);
+              }
+            }
+          }, 300);
+        }
+      },
+      'screenshare:denied': ({ userId }) => {
+        if (String(userId) === String(userRef.current?._id)) {
+          toast.error('Screen share request denied by host');
+        }
+      },
+      'host:mute': () => {
+        agoraRef.current.toggleAudio();
+        toast('Muted by host', { icon: '🔇' });
+      },
+      'participant:roleChanged': ({ userId, role }) => {
+        setParticipants(prev => prev.map(p =>
+          p.userId === String(userId) ? { ...p, role } : p
+        ));
+        if (String(userId) === String(userRef.current?._id)) {
+          toast(`You are now a ${role}`, { icon: '⭐' });
+        }
+      },
+      'recording:started': ({ startedBy }) => {
+        setIsRecording(true);
+        toast(`Recording started by ${startedBy}`, { icon: '🔴' });
+      },
+      'recording:stopped': () => {
+        setIsRecording(false);
+        toast('Recording stopped', { icon: '⏹️' });
+      },
+      'meeting:lockChanged': ({ isLocked }) => {
+        toast(isLocked ? 'Meeting locked' : 'Meeting unlocked', {
+          icon: isLocked ? '🔒' : '🔓',
+        });
       }
-    });
+    };
 
-    socket.on('screenshare:denied', ({ userId }) => {
-      if (String(userId) === String(user?._id)) {
-        toast.error('Screen share request denied by host');
-      }
-    });
-
-    socket.on('host:mute', () => {
-      agoraRef.current.toggleAudio();
-      toast('Muted by host', { icon: '🔇' });
-    });
-
-    socket.on('participant:roleChanged', ({ userId, role }) => {
-      setParticipants(prev => prev.map(p =>
-        p.userId === String(userId) ? { ...p, role } : p
-      ));
-      if (String(userId) === String(user?._id)) {
-        toast(`You are now a ${role}`, { icon: '⭐' });
-      }
-    });
-
-    socket.on('recording:started', ({ startedBy }) => {
-      setIsRecording(true);
-      toast(`Recording started by ${startedBy}`, { icon: '🔴' });
-    });
-
-    socket.on('recording:stopped', () => {
-      setIsRecording(false);
-      toast('Recording stopped', { icon: '⏹️' });
-    });
-
-    socket.on('meeting:lockChanged', ({ isLocked }) => {
-      toast(isLocked ? 'Meeting locked' : 'Meeting unlocked', {
-        icon: isLocked ? '🔒' : '🔓',
-      });
-    });
+    // Attach all precise handlers
+    Object.entries(socketHandlers).forEach(([ev, fn]) => socket.on(ev, fn));
 
     // ── Join Agora ───────────────────────────────────────────
     if (!agoraJoinedRef.current) {
@@ -264,17 +270,15 @@ export default function MeetingRoom() {
     }
 
     return () => {
+      // ✅ FIX 4: Target precise functions to clean up to avoid killing ChatPanel's listeners
+      socket.off('connect', joinMeetingRoom);
+      Object.entries(socketHandlers).forEach(([ev, fn]) => socket.off(ev, fn));
+      
       socket.emit('meeting:leave', { meetingId });
-      [
-        'participant:joined', 'participant:left', 'participant:removed',
-        'host:kicked', 'meeting:ended', 'media:audio', 'media:video',
-        'hand:raise', 'reaction', 'screenshare:request', 'screenshare:approved',
-        'screenshare:denied', 'host:mute', 'participant:roleChanged',
-        'recording:started', 'recording:stopped', 'meeting:lockChanged',
-      ].forEach(ev => socket.off(ev));
       agora.leave();
+      agoraJoinedRef.current = false; // Allow re-joining on Strict Mode remount
     };
-  }, [meeting]);
+  }, [meeting, connectionError]);
 
   // ── Handlers ─────────────────────────────────────────────────
 
@@ -293,7 +297,6 @@ export default function MeetingRoom() {
 
   const handleToggleAudio = useCallback(async () => {
     await agora.toggleAudio();
-    // ✅ Emit immediately without waiting
     socketRef.current?.emit('media:audio', { meetingId, muted: !agora.isAudioMuted });
   }, [agora, meetingId]);
 
@@ -310,14 +313,12 @@ export default function MeetingRoom() {
       return;
     }
 
-    // ✅ Check mobile support
     if (!screenShareSupported) {
       toast.error('Screen sharing is not supported on mobile browsers. Please use desktop Chrome, Edge or Firefox.', { duration: 5000 });
       return;
     }
 
     if (isHost) {
-      // Host can share directly
       try {
         await agora.startScreenShare();
         socketRef.current?.emit('media:screenShare', { meetingId, sharing: true });
@@ -332,7 +333,6 @@ export default function MeetingRoom() {
         }
       }
     } else {
-      // ✅ Participant sends request to host
       socketRef.current?.emit('screenshare:request', {
         meetingId,
         userId: String(user._id),
@@ -437,7 +437,6 @@ export default function MeetingRoom() {
     role: isHost ? 'host' : 'participant',
   };
 
-  // ✅ Match remote Agora users to participant names
   const remoteWithTracks = agora.remoteUsers.map((ru, index) => {
     let p = participants.find(pp => pp.agoraUid === ru.uid);
     if (!p) {

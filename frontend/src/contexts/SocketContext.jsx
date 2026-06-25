@@ -9,9 +9,14 @@ export const SocketProvider = ({ children }) => {
   const [connected, setConnected] = useState(false);
 
   const connect = (token) => {
-    if (socketRef.current?.connected) return socketRef.current;
+    // ✅ FIX 1: Prevent duplicate ghost sockets in React. 
+    // Do NOT check .connected here. If the instance exists, return it.
+    if (socketRef.current) return socketRef.current;
 
-    const socket = io(import.meta.env.VITE_SOCKET_URL || 'http://localhost:5000', {
+    // Use the exact backend URL
+    const socketUrl = import.meta.env.VITE_SOCKET_URL || 'http://localhost:5000';
+
+    const socket = io(socketUrl, {
       auth: { token },
       transports: ['websocket', 'polling'],
       reconnection: true,
@@ -19,8 +24,19 @@ export const SocketProvider = ({ children }) => {
       reconnectionDelay: 1000,
     });
 
-    socket.on('connect', () => { setConnected(true); });
-    socket.on('disconnect', () => { setConnected(false); });
+    socket.on('connect', () => { 
+      console.log('✅ Socket fully connected with ID:', socket.id);
+      setConnected(true); 
+    });
+    
+    socket.on('disconnect', () => { 
+      console.warn('❌ Socket disconnected');
+      setConnected(false); 
+    });
+
+    socket.on('connect_error', (err) => {
+      console.error('⚠️ Socket connect error:', err.message);
+    });
 
     socketRef.current = socket;
     return socket;
