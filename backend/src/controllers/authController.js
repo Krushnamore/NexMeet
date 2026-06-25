@@ -2,7 +2,6 @@ const jwt = require('jsonwebtoken');
 const { validationResult } = require('express-validator');
 const User = require('../models/User');
 const logger = require('../utils/logger');
-const nodemailer = require('nodemailer');
 const crypto = require('crypto');
 
 const generateTokens = (userId) => {
@@ -94,7 +93,7 @@ exports.login = async (req, res, next) => {
   }
 };
 
-// Forgot Password - Send OTP via Email
+// Forgot Password - Send OTP via Google Apps Script
 exports.forgotPassword = async (req, res, next) => {
   try {
     const errors = validationResult(req);
@@ -106,54 +105,46 @@ exports.forgotPassword = async (req, res, next) => {
     const user = await User.findOne({ email });
     
     if (!user) {
-      return res.status(200).json({ message: 'Email service verified. If that email is registered, an OTP has been sent.' });
+      return res.status(200).json({ message: 'If that email is registered, an OTP has been sent.' });
     }
 
+    // Generate 6-digit OTP
     const otp = crypto.randomInt(100000, 999999).toString();
     
+    // Save OTP and expiry (10 minutes)
     user.resetPasswordOtp = otp;
     user.resetPasswordOtpExpires = Date.now() + 10 * 60 * 1000;
     await user.save({ validateBeforeSave: false });
 
-    const transporter = nodemailer.createTransport({
-      host: process.env.SMTP_HOST || 'smtp.gmail.com',
-      port: process.env.SMTP_PORT || 587,
-      secure: process.env.SMTP_PORT == 465, 
-      auth: {
-        user: process.env.EMAIL_USER,
-        pass: process.env.EMAIL_PASS,
-      },
-    });
-
-    // --- NEW: VERIFY EMAIL SERVICE ---
-    try {
-      await transporter.verify();
-      logger.info('✅ SMTP Connection Verified: Email service is working properly.');
-    } catch (verifyError) {
-      logger.error('❌ SMTP Verification Failed: Email service is NOT working.', verifyError);
-      return res.status(500).json({ error: 'Email service is down. Please check backend SMTP credentials.' });
+    // Send the OTP using your Free Google Apps Script Web App
+    const scriptUrl = process.env.GOOGLE_SCRIPT_URL;
+    
+    if (!scriptUrl) {
+       logger.error('GOOGLE_SCRIPT_URL is missing in environment variables');
+       return res.status(500).json({ error: 'Server misconfiguration. Cannot send email.' });
     }
 
-    const mailOptions = {
-      from: process.env.EMAIL_FROM || '"NexMeet" <more96899@gmail.com>',
-      to: user.email,
-      subject: 'Password Reset OTP - NexMeet',
-      html: `
-        <div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto;">
-          <h2>Password Reset Request</h2>
-          <p>Your One-Time Password (OTP) for resetting your NexMeet password is:</p>
-          <h1 style="color: #3b82f6; letter-spacing: 5px; font-size: 32px; background: #f3f4f6; padding: 15px; text-align: center; border-radius: 8px;">${otp}</h1>
-          <p>This OTP is valid for <strong>10 minutes</strong>. If you did not request this password reset, please ignore this email.</p>
-        </div>
-      `,
-    };
+    // Call the Google Script
+    const response = await fetch(scriptUrl, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({ email: user.email, otp: otp }),
+    });
 
-    await transporter.sendMail(mailOptions);
+    const result = await response.json();
+
+    if (result.status === "error") {
+      logger.error('Google Script Error:', result.message);
+      return res.status(500).json({ error: 'Failed to send email.' });
+    }
+
     logger.info(`✅ Password reset OTP sent successfully to: ${email}`);
+    res.status(200).json({ message: 'OTP has been sent successfully!' });
 
-    res.status(200).json({ message: 'Email service is working properly! OTP has been sent.' });
   } catch (err) {
-    logger.error('SMTP Error:', err);
+    logger.error('Server Error:', err);
     next(err);
   }
 };
