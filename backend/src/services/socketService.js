@@ -11,16 +11,15 @@ const setupSocketHandlers = (io) => {
 
   io.use(async (socket, next) => {
     try {
-      // ✅ FIX 3: Check multiple locations for the auth token just in case the frontend sends it differently
-      const token = socket.handshake.auth?.token || 
-                    socket.handshake.query?.token || 
+      const token = socket.handshake.auth?.token ||
+                    socket.handshake.query?.token ||
                     (socket.handshake.headers?.authorization && socket.handshake.headers.authorization.split(' ')[1]);
 
       if (!token) return next(new Error('Authentication required'));
-      
+
       const decoded = jwt.verify(token, process.env.JWT_SECRET);
       const user = await User.findById(decoded.userId).select('name email avatar');
-      
+
       if (!user) return next(new Error('User not found'));
       socket.user = user;
       next();
@@ -37,7 +36,7 @@ const setupSocketHandlers = (io) => {
         socket.join(meetingId);
         if (!meetingRooms.has(meetingId)) meetingRooms.set(meetingId, new Set());
         meetingRooms.get(meetingId).add(socket.id);
-        
+
         socketUsers.set(socket.id, {
           userId: String(socket.user._id),
           userName: socket.user.name,
@@ -80,12 +79,15 @@ const setupSocketHandlers = (io) => {
         };
 
         if (isPrivate) {
+          // Only relay to the recipient — the sender already shows their own
+          // message optimistically in the UI, so echoing it back here
+          // produced a visible duplicate bubble for the sender.
           const recipientSocket = findSocketByUserId(String(recipientId), meetingId);
           if (recipientSocket) io.to(recipientSocket).emit('chat:message', msgData);
-          socket.emit('chat:message', msgData); // Send back to self
         } else {
-          // ✅ FIX 2: Use io.to() instead of socket.to() so the sender ALSO receives their own chat message!
-          io.to(meetingId).emit('chat:message', msgData);
+          // Broadcast to everyone EXCEPT the sender (socket.to, not io.to).
+          // The sender already rendered their own message optimistically.
+          socket.to(meetingId).emit('chat:message', msgData);
         }
 
         // Save to Database
@@ -145,7 +147,7 @@ const setupSocketHandlers = (io) => {
         const requesterId = String(socket.user._id);
         const meeting = await Meeting.findOne({ meetingId });
         if (!meeting) return;
-        
+
         const hostSocket = findSocketByUserId(String(meeting.host), meetingId);
         const payload = { userId: requesterId, name: socket.user.name };
 
@@ -215,7 +217,6 @@ function handleLeave(socket, meetingId, io) {
   logger.info(`${socket.user?.name} left room ${meetingId}`);
 }
 
-// ✅ FIX 1: Reverted back to the highly reliable loop method to prevent race conditions on tab refreshes
 function findSocketByUserId(userId, meetingId) {
   if (!userId) return null;
   const userIdStr = String(userId);
