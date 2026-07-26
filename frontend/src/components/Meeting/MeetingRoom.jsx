@@ -65,8 +65,12 @@ export default function MeetingRoom() {
   const [loading, setLoading] = useState(true);
 
   const { acquire: acquireWakeLock, release: releaseWakeLock } = useWakeLock();
-  const isHost = String(meetingInfo?.host) === String(user?._id) ||
-                 String(meetingInfo?.hostId) === String(user?._id);
+  // meetingInfo.host is a POPULATED object ({_id, name, email, avatar}) because
+  // getMeeting() does .populate('host', ...) — so we must compare host._id,
+  // not host itself (String(object) would always produce "[object Object]").
+  const isHost =
+    String(meetingInfo?.host?._id || meetingInfo?.host) === String(user?._id) ||
+    String(meetingInfo?.hostId) === String(user?._id);
 
   // ── AGORA ─────────────────────────────────────────────────────────────────
   const handleUserLeft = useCallback((agoraUser) => {
@@ -251,6 +255,14 @@ export default function MeetingRoom() {
       if (raised) toast(`${name} raised their hand ✋`, { duration: 4000 });
     };
 
+    // MEETING ENDED — host ended it for everyone. Every client (including
+    // the host, once their own request completes) lands here and leaves.
+    const onMeetingEnded = () => {
+      toast.error('Meeting has been ended by the host');
+      releaseWakeLock();
+      navigate('/dashboard');
+    };
+
     socket.on('meeting:participants', onParticipants);
     socket.on('participant:joined', onJoined);
     socket.on('participant:left', onLeft);
@@ -264,6 +276,7 @@ export default function MeetingRoom() {
     socket.on('host:banned', onBanned);
     socket.on('reaction', onReaction);
     socket.on('hand:raise', onHandRaise);
+    socket.on('meeting:ended', onMeetingEnded);
 
     return () => {
       socket.off('meeting:participants', onParticipants);
@@ -279,6 +292,7 @@ export default function MeetingRoom() {
       socket.off('host:banned', onBanned);
       socket.off('reaction', onReaction);
       socket.off('hand:raise', onHandRaise);
+      socket.off('meeting:ended', onMeetingEnded);
     };
   }, [socket, meetingId, showChat]);
 
@@ -343,6 +357,22 @@ export default function MeetingRoom() {
     navigate('/dashboard');
   };
 
+  // Host-only: end the meeting for EVERYONE, regardless of co-hosts.
+  // Calls the REST endpoint (server re-validates host/co-host permission),
+  // which marks the meeting ended and broadcasts 'meeting:ended' to the
+  // whole room — every other participant's onMeetingEnded handler above
+  // fires and boots them out automatically.
+  const handleEndMeeting = async () => {
+    if (!window.confirm('End this meeting for everyone? This cannot be undone.')) return;
+    try {
+      await api.post(`/meetings/${meetingId}/end`);
+      releaseWakeLock();
+      navigate('/dashboard');
+    } catch (err) {
+      toast.error(err.response?.data?.error || 'Failed to end meeting');
+    }
+  };
+
   // Admin actions
   const handleAdminMute   = (uid) => socket?.emit('host:mute',   { meetingId, targetUserId: uid });
   const handleAdminUnmute = (uid) => socket?.emit('host:unmute', { meetingId, targetUserId: uid });
@@ -404,7 +434,17 @@ export default function MeetingRoom() {
               {meetingId} · tap to copy
             </button>
           </div>
-          <div className="text-xs text-gray-400">{participants.length + 1} participants</div>
+          <div className="flex items-center gap-3">
+            <div className="text-xs text-gray-400">{participants.length + 1} participants</div>
+            {isHost && (
+              <button
+                onClick={handleEndMeeting}
+                className="px-3 py-1.5 bg-red-600 hover:bg-red-700 transition-colors rounded-lg text-xs font-semibold"
+              >
+                End Meeting
+              </button>
+            )}
+          </div>
         </div>
 
         {/* Video area */}

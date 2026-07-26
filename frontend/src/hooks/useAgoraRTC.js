@@ -1,5 +1,6 @@
 import { useState, useEffect, useRef, useCallback } from 'react';
 import AgoraRTC from 'agora-rtc-sdk-ng';
+import api from '../services/api';
 
 AgoraRTC.setLogLevel(2);
 
@@ -7,11 +8,11 @@ const isIOS     = () => /iPhone|iPad|iPod/i.test(navigator.userAgent);
 const isAndroid = () => /Android/i.test(navigator.userAgent);
 
 const useAgoraRTC = ({ appId, channel, token, uid, onUserJoined, onUserLeft }) => {
-  const clientRef         = useRef(null);
-  const localAudioRef     = useRef(null);
-  const localVideoRef     = useRef(null);
-  const screenTrackRef    = useRef(null);
-  const screenClientRef   = useRef(null);
+  const clientRef          = useRef(null);
+  const localAudioRef      = useRef(null);
+  const localVideoRef      = useRef(null);
+  const screenTrackRef     = useRef(null);
+  const screenClientRef    = useRef(null);
   const audioLevelTimerRef = useRef(null);
 
   const [localVideoTrack, setLocalVideoTrack] = useState(null);
@@ -22,12 +23,75 @@ const useAgoraRTC = ({ appId, channel, token, uid, onUserJoined, onUserLeft }) =
   const [joined,          setJoined]          = useState(false);
   const [error,           setError]           = useState(null);
 
-  // ── INIT ────────────────────────────────────────────────────────────────
+  // ── CREATE CLIENT ONCE ───────────────────────────────────────────────────
+  // Created lazily on first use so `join` (below) always has a client to
+  // work with, even before the auto-join effect has run.
+  const getClient = useCallback(() => {
+    if (!clientRef.current) {
+      clientRef.current = AgoraRTC.createClient({ mode: 'rtc', codec: 'vp8' });
+    }
+    return clientRef.current;
+  }, []);
+
+  // ── JOIN ──────────────────────────────────────────────────────────────
+  // Declared once, at the top level, as a stable useCallback. This is the
+  // ONLY definition of `join` — the old code had a second, dead-code copy
+  // declared *after* the `return` statement, which caused:
+  //   "Uncaught ReferenceError: Cannot access 'join' before initialization"
+  const join = useCallback(async () => {
+    if (!appId || !channel || !token) return;
+    const client = getClient();
+
+    try {
+      console.log('Joining Agora with:', { appId, channel, uid, hasToken: !!token });
+      await client.join(appId, channel, token, uid);
+      console.log('✅ Agora joined:', channel, 'uid:', uid);
+
+      // Audio with full echo/noise cancellation
+      const audioTrack = await AgoraRTC.createMicrophoneAudioTrack({
+        encoderConfig: 'music_standard',
+        AEC: true,  // Acoustic Echo Cancellation
+        ANS: true,  // Automatic Noise Suppression
+        AGC: true,  // Automatic Gain Control
+      });
+      localAudioRef.current = audioTrack;
+      setLocalAudioTrack(audioTrack);
+
+      // Camera
+      const videoTrack = await AgoraRTC.createCameraVideoTrack({
+        encoderConfig: {
+          width:      { ideal: 1280 },
+          height:     { ideal: 720  },
+          frameRate:  24,
+          bitrateMin: 400,
+          bitrateMax: 1500,
+        },
+        facingMode: 'user',
+      });
+      localVideoRef.current = videoTrack;
+      setLocalVideoTrack(videoTrack);
+
+      await client.publish([audioTrack, videoTrack]);
+      console.log('✅ Published 2 track(s)');
+      setJoined(true);
+
+      // Audio level meter (0-100, correct direction for volume bar)
+      audioLevelTimerRef.current = setInterval(() => {
+        const level = audioTrack.getVolumeLevel?.() ?? 0;
+        setAudioLevel(Math.round(level * 100));
+      }, 200);
+
+    } catch (err) {
+      console.error('❌ Agora join failed:', err.code, err.message);
+      setError(err.message || 'Failed to join call');
+    }
+  }, [appId, channel, token, uid, getClient]);
+
+  // ── INIT / AUTO-JOIN ON MOUNT ────────────────────────────────────────────
   useEffect(() => {
     if (!appId || !channel || !token) return;
 
-    const client = AgoraRTC.createClient({ mode: 'rtc', codec: 'vp8' });
-    clientRef.current = client;
+    const client = getClient();
 
     const handleUserPublished = async (user, mediaType) => {
       await client.subscribe(user, mediaType);
@@ -55,51 +119,6 @@ const useAgoraRTC = ({ appId, channel, token, uid, onUserJoined, onUserLeft }) =
     client.on('user-unpublished', handleUserUnpublished);
     client.on('user-left',        handleUserLeft);
 
-    const join = async () => {
-      try {
-        await client.join(appId, channel, token, uid);
-        console.log('✅ Agora joined:', channel, 'uid:', uid);
-
-        // Audio with full echo/noise cancellation
-        const audioTrack = await AgoraRTC.createMicrophoneAudioTrack({
-          encoderConfig: 'music_standard',
-          AEC: true,  // Acoustic Echo Cancellation
-          ANS: true,  // Automatic Noise Suppression
-          AGC: true,  // Automatic Gain Control
-        });
-        localAudioRef.current = audioTrack;
-        setLocalAudioTrack(audioTrack);
-
-        // Camera
-        const videoTrack = await AgoraRTC.createCameraVideoTrack({
-          encoderConfig: {
-            width:       { ideal: 1280 },
-            height:      { ideal: 720  },
-            frameRate:   24,
-            bitrateMin:  400,
-            bitrateMax:  1500,
-          },
-          facingMode: 'user',
-        });
-        localVideoRef.current = videoTrack;
-        setLocalVideoTrack(videoTrack);
-
-        await client.publish([audioTrack, videoTrack]);
-        console.log('✅ Published 2 track(s)');
-        setJoined(true);
-
-        // Audio level meter (0-100, correct direction for volume bar)
-        audioLevelTimerRef.current = setInterval(() => {
-          const level = audioTrack.getVolumeLevel?.() ?? 0;
-          setAudioLevel(Math.round(level * 100));
-        }, 200);
-
-      } catch (err) {
-        console.error('Agora join error:', err);
-        setError(err.message || 'Failed to join call');
-      }
-    };
-
     join();
 
     return () => {
@@ -112,8 +131,9 @@ const useAgoraRTC = ({ appId, channel, token, uid, onUserJoined, onUserLeft }) =
       screenTrackRef.current?.close();
       screenClientRef.current?.leave();
       client.leave();
+      clientRef.current = null;
     };
-  }, [appId, channel, token, uid]);
+  }, [appId, channel, token, uid, join, getClient, onUserJoined, onUserLeft]);
 
   // ── MUTE / UNMUTE ────────────────────────────────────────────────────────
   const muteAudio = useCallback(async () => {
@@ -182,13 +202,20 @@ const useAgoraRTC = ({ appId, channel, token, uid, onUserJoined, onUserLeft }) =
         screenClientRef.current = screenClient;
 
         const screenUid = uid + 10000; // offset so it's a unique UID in the channel
-        await screenClient.join(appId, channel, token, screenUid);
+
+        // The main `token` is cryptographically bound to `uid` — it will NOT
+        // authorize a join with `screenUid`. Fetch a fresh token for this uid.
+        const { data: screenTokenRes } = await api.post('/agora/rtc-token', {
+          channelName: channel,
+          uid: screenUid,
+        });
+        await screenClient.join(appId, channel, screenTokenRes.token, screenUid);
 
         // Wrap the native MediaStreamTrack in an Agora custom video track
         const screenTrack = await AgoraRTC.createCustomVideoTrack({
           mediaStreamTrack: stream.getVideoTracks()[0],
-          frameRate:   15,
-          bitrateMax:  1500,
+          frameRate:  15,
+          bitrateMax: 1500,
         });
 
         screenTrackRef.current = screenTrack;
@@ -232,15 +259,22 @@ const useAgoraRTC = ({ appId, channel, token, uid, onUserJoined, onUserLeft }) =
       screenClientRef.current = screenClient;
 
       const screenUid = uid + 10000;
-      await screenClient.join(appId, channel, token, screenUid);
+
+      // Same fix as the Android path above: the main token is bound to
+      // `uid` and will be rejected for `screenUid` — fetch a fresh one.
+      const { data: screenTokenRes } = await api.post('/agora/rtc-token', {
+        channelName: channel,
+        uid: screenUid,
+      });
+      await screenClient.join(appId, channel, screenTokenRes.token, screenUid);
 
       const screenTrack = await AgoraRTC.createScreenVideoTrack(
         {
           encoderConfig: {
-            width:       { ideal: 1920, max: 1920 },
-            height:      { ideal: 1080, max: 1080 },
-            frameRate:   15,
-            bitrateMax:  3000,
+            width:      { ideal: 1920, max: 1920 },
+            height:     { ideal: 1080, max: 1080 },
+            frameRate:  15,
+            bitrateMax: 3000,
           },
           optimizationMode: 'detail', // crisp text & UI
         },
@@ -286,17 +320,6 @@ const useAgoraRTC = ({ appId, channel, token, uid, onUserJoined, onUserLeft }) =
     client: clientRef.current,
     join,
   };
-  const join = async () => {
-  try {
-    console.log('Joining Agora with:', { appId, channel, uid, hasToken: !!token });
-    await client.join(appId, channel, token, uid);
-    console.log('✅ Agora joined');
-    // ... rest of join
-  } catch (err) {
-    console.error('❌ Agora join failed:', err.code, err.message);
-    setError(err.message);
-  }
-};
 };
 
 export default useAgoraRTC;

@@ -13,7 +13,9 @@ export default function ChatPanel({ meetingId, participants, currentUser, socket
   useEffect(() => {
     const load = async () => {
       try {
-        const res = await api.get(`/meetings/${meetingId}/chat`);
+        // FIXED: backend route is GET /api/chat/:meetingId (see README "Chat"
+        // section), not /api/meetings/:meetingId/chat — that path 404'd.
+        const res = await api.get(`/chat/${meetingId}`);
         const history = (res.data?.messages || res.data || []).map((m) => ({
           ...m,
           _id: m._id || `hist_${m.timestamp || Date.now()}_${Math.random()}`,
