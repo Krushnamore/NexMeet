@@ -121,10 +121,13 @@ export default function MeetingRoom() {
   }, [meetingId]);
 
   // ── JOIN SOCKET ROOM (once Agora is connected) ────────────────────────────
+  // agoraUid is included here — the backend stores it against this socket
+  // and broadcasts it to everyone else, so remote clients can map an
+  // incoming Agora video stream's numeric uid back to a name.
   useEffect(() => {
     if (!socket || !meetingId || !joined) return;
-    socket.emit('meeting:join', { meetingId });
-  }, [socket, meetingId, joined]);
+    socket.emit('meeting:join', { meetingId, agoraUid });
+  }, [socket, meetingId, joined, agoraUid]);
 
   // ── SOCKET EVENTS ─────────────────────────────────────────────────────────
   useEffect(() => {
@@ -132,14 +135,23 @@ export default function MeetingRoom() {
 
     const onParticipants = ({ participants: list }) => setParticipants(list);
 
-    const onJoined = ({ userId, name, avatar }) => {
+    const onJoined = ({ userId, name, avatar, agoraUid: joinerAgoraUid }) => {
       setParticipants((prev) =>
         prev.find((p) => p.userId === userId)
           ? prev
-          : [...prev, { userId, name, avatar }]
+          : [...prev, { userId, name, avatar, agoraUid: joinerAgoraUid ?? null }]
       );
       toast(`${name} joined`, { icon: '👋' });
       sendBrowserNotif('NexMeet', `${name} joined the meeting`);
+    };
+
+    // Covers the case where a client's Agora uid becomes known slightly
+    // after they joined the socket room (rare, but the id is only valid
+    // once the token/uid fetch resolves on their end).
+    const onParticipantAgoraUid = ({ userId, agoraUid: updatedUid }) => {
+      setParticipants((prev) =>
+        prev.map((p) => (p.userId === userId ? { ...p, agoraUid: updatedUid } : p))
+      );
     };
 
     const onLeft = ({ userId, name }) => {
@@ -265,6 +277,7 @@ export default function MeetingRoom() {
 
     socket.on('meeting:participants', onParticipants);
     socket.on('participant:joined', onJoined);
+    socket.on('participant:agoraUid', onParticipantAgoraUid);
     socket.on('participant:left', onLeft);
     socket.on('chat:message', onChatMessage);
     socket.on('media:screenShare', onScreenShare);
@@ -281,6 +294,7 @@ export default function MeetingRoom() {
     return () => {
       socket.off('meeting:participants', onParticipants);
       socket.off('participant:joined', onJoined);
+      socket.off('participant:agoraUid', onParticipantAgoraUid);
       socket.off('participant:left', onLeft);
       socket.off('chat:message', onChatMessage);
       socket.off('media:screenShare', onScreenShare);
@@ -412,7 +426,10 @@ export default function MeetingRoom() {
         uid: u.uid,
         videoTrack: u.videoTrack,
         audioTrack: u.audioTrack,
-        name: participants.find((p) => p.socketId === String(u.uid))?.name || 'Participant',
+        // u.uid is the Agora RTC numeric uid — match it against the
+        // agoraUid we now receive over the socket join handshake, not
+        // against socketId (a Socket.IO connection id — unrelated value).
+        name: participants.find((p) => Number(p.agoraUid) === Number(u.uid))?.name || 'Participant',
       })),
   ];
 

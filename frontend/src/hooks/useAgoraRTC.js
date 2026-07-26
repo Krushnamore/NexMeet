@@ -15,6 +15,18 @@ const useAgoraRTC = ({ appId, channel, token, uid, onUserJoined, onUserLeft }) =
   const screenClientRef    = useRef(null);
   const audioLevelTimerRef = useRef(null);
 
+  // onUserJoined/onUserLeft come from the parent as inline callbacks that
+  // often get a new identity on unrelated re-renders (e.g. MeetingRoom's
+  // handleUserLeft changes identity whenever screenSharerUid changes).
+  // Keeping them in the join/leave effect's dependency array would tear
+  // down and rebuild the whole Agora client — leave channel, close tracks,
+  // rejoin — every time that happens. Refs sidestep that: the effect reads
+  // the latest callback via the ref without needing it as a dependency.
+  const onUserJoinedRef = useRef(onUserJoined);
+  const onUserLeftRef   = useRef(onUserLeft);
+  useEffect(() => { onUserJoinedRef.current = onUserJoined; }, [onUserJoined]);
+  useEffect(() => { onUserLeftRef.current   = onUserLeft;   }, [onUserLeft]);
+
   const [localVideoTrack, setLocalVideoTrack] = useState(null);
   const [localAudioTrack, setLocalAudioTrack] = useState(null);
   const [remoteUsers,     setRemoteUsers]     = useState([]);
@@ -93,26 +105,38 @@ const useAgoraRTC = ({ appId, channel, token, uid, onUserJoined, onUserLeft }) =
 
     const client = getClient();
 
+    // NOTE: `user` (IAgoraRTCRemoteUser) exposes `videoTrack` / `audioTrack`
+    // as GETTERS defined on its prototype (get videoTrack(){...}), not as
+    // the instance's own enumerable properties. `{ ...u, ...user }` only
+    // copies OWN enumerable properties, so every spread silently dropped
+    // videoTrack/audioTrack from the resulting object -> the second
+    // 'user-published' event (audio publishes, then video, or vice versa)
+    // overwrote the working entry with one where videoTrack/audioTrack were
+    // undefined. That's why the remote tile stayed on the placeholder even
+    // though the SDK had genuinely subscribed successfully.
+    // Fix: keep the SAME live `user` reference (Agora reuses one instance
+    // per uid and updates it in place), just swap it into a NEW array so
+    // React re-renders. Reading u.videoTrack later goes through the getter
+    // and always reflects the current subscription state.
     const handleUserPublished = async (user, mediaType) => {
       await client.subscribe(user, mediaType);
       setRemoteUsers((prev) => {
-        const exists = prev.find((u) => u.uid === user.uid);
-        return exists
-          ? prev.map((u) => (u.uid === user.uid ? { ...u, ...user } : u))
-          : [...prev, user];
+        const idx = prev.findIndex((u) => u.uid === user.uid);
+        if (idx === -1) return [...prev, user];
+        const next = [...prev];
+        next[idx] = user;
+        return next;
       });
-      onUserJoined?.(user, mediaType);
+      onUserJoinedRef.current?.(user, mediaType);
     };
 
     const handleUserUnpublished = (user) => {
-      setRemoteUsers((prev) =>
-        prev.map((u) => (u.uid === user.uid ? { ...u, ...user } : u))
-      );
+      setRemoteUsers((prev) => prev.map((u) => (u.uid === user.uid ? user : u)));
     };
 
     const handleUserLeft = (user) => {
       setRemoteUsers((prev) => prev.filter((u) => u.uid !== user.uid));
-      onUserLeft?.(user);
+      onUserLeftRef.current?.(user);
     };
 
     client.on('user-published',   handleUserPublished);
@@ -133,7 +157,7 @@ const useAgoraRTC = ({ appId, channel, token, uid, onUserJoined, onUserLeft }) =
       client.leave();
       clientRef.current = null;
     };
-  }, [appId, channel, token, uid, join, getClient, onUserJoined, onUserLeft]);
+  }, [appId, channel, token, uid, join, getClient]);
 
   // ── MUTE / UNMUTE ────────────────────────────────────────────────────────
   const muteAudio = useCallback(async () => {

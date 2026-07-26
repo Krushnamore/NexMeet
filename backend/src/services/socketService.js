@@ -46,7 +46,11 @@ const setupSocketHandlers = (io) => {
     logger.info(`Socket connected: ${socket.id} (${socket.user?.name})`);
 
     // ── JOIN ──────────────────────────────────────────────────────────────
-    socket.on('meeting:join', async ({ meetingId }) => {
+    // `agoraUid` is the numeric UID this client will use (or already used)
+    // to join the Agora RTC channel. We store + broadcast it here so every
+    // other client can map an incoming Agora video stream (which only has
+    // `uid`) back to a name — that link does not exist anywhere else.
+    socket.on('meeting:join', async ({ meetingId, agoraUid }) => {
       try {
         const userId = String(socket.user._id);
 
@@ -65,6 +69,7 @@ const setupSocketHandlers = (io) => {
           userName: socket.user.name,
           avatar: socket.user.avatar,
           meetingId,
+          agoraUid: agoraUid != null ? Number(agoraUid) : null,
         });
 
         // Tell everyone else this person joined
@@ -73,6 +78,7 @@ const setupSocketHandlers = (io) => {
           name: socket.user.name,
           avatar: socket.user.avatar,
           socketId: socket.id,
+          agoraUid: agoraUid != null ? Number(agoraUid) : null,
         });
 
         // Send the new joiner a snapshot of everyone already in the room
@@ -84,16 +90,32 @@ const setupSocketHandlers = (io) => {
               userId: info.userId,
               name: info.userName,
               avatar: info.avatar,
+              agoraUid: info.agoraUid,
             });
           }
         }
         socket.emit('meeting:participants', { participants });
 
-        logger.info(`${socket.user.name} joined room ${meetingId}`);
+        logger.info(`${socket.user.name} joined room ${meetingId} (agoraUid: ${agoraUid})`);
       } catch (err) {
         logger.error('meeting:join error:', err);
         socket.emit('error', { message: 'Failed to join meeting room' });
       }
+    });
+
+    // A client can also report its agoraUid slightly after `meeting:join`
+    // (e.g. if the Agora token/uid arrives a beat later than the socket
+    // connection). Keep the stored record and everyone else's view in sync.
+    socket.on('meeting:agoraUid', ({ meetingId, agoraUid }) => {
+      const info = socketUsers.get(socket.id);
+      if (!info) return;
+      info.agoraUid = agoraUid != null ? Number(agoraUid) : null;
+      socketUsers.set(socket.id, info);
+      socket.to(meetingId).emit('participant:agoraUid', {
+        userId: info.userId,
+        socketId: socket.id,
+        agoraUid: info.agoraUid,
+      });
     });
 
     socket.on('meeting:leave', ({ meetingId }) => handleLeave(socket, meetingId, io));
