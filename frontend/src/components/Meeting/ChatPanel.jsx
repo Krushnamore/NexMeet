@@ -100,7 +100,7 @@ export default function ChatPanel({ meetingId, participants, currentUser, socket
   });
 
   return (
-    <div className="w-80 flex flex-col bg-gray-800 border-l border-gray-700 h-full">
+    <div className="fixed inset-0 z-50 flex flex-col bg-gray-800 md:static md:inset-auto md:z-auto md:w-80 md:border-l md:border-gray-700 h-full">
       {/* Header */}
       <div className="flex items-center justify-between px-4 py-3 border-b border-gray-700">
         <h2 className="font-semibold text-sm">Chat</h2>

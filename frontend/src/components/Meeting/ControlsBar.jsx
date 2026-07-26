@@ -51,7 +51,7 @@ export default function ControlsBar({
   const volumeBarWidth = `${Math.min(100, Math.max(0, audioLevel))}%`;
 
   return (
-    <div className="relative bg-gray-900 border-t border-gray-700 px-4 py-3">
+    <div className="relative bg-gray-900 border-t border-gray-700 px-2 sm:px-4 py-2 sm:py-3">
 
       {/* Audio level bar — sits at the very top of the controls strip */}
       {!isMuted && (
@@ -63,7 +63,7 @@ export default function ControlsBar({
         </div>
       )}
 
-      <div className="flex items-center justify-between max-w-2xl mx-auto">
+      <div className="flex items-center gap-0.5 sm:gap-1 justify-start sm:justify-between max-w-2xl mx-auto overflow-x-auto no-scrollbar">
 
         {/* Mute / Unmute */}
         <Btn
@@ -166,7 +166,7 @@ export default function ControlsBar({
         <button
           onClick={onLeave}
           title="Leave meeting"
-          className="flex flex-col items-center gap-0.5 px-3 py-2 rounded-xl bg-red-600 hover:bg-red-700 text-white transition-colors"
+          className="flex flex-col items-center gap-0.5 px-2 sm:px-3 py-1.5 sm:py-2 rounded-xl bg-red-600 hover:bg-red-700 text-white transition-colors shrink-0"
         >
           <LeaveSVG />
           <span className="text-xs">Leave</span>
@@ -184,7 +184,7 @@ function Btn({ onClick, label, active, danger, highlight, disabled, badge, title
       disabled={disabled}
       title={title}
       className={`
-        relative flex flex-col items-center gap-0.5 px-3 py-2 rounded-xl transition-all
+        relative flex flex-col items-center gap-0.5 px-2 sm:px-3 py-1.5 sm:py-2 rounded-xl transition-all shrink-0
         ${disabled
           ? 'opacity-40 cursor-not-allowed text-gray-500'
           : 'cursor-pointer hover:bg-gray-700'

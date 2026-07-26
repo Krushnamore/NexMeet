@@ -55,6 +55,7 @@ export default function MeetingRoom() {
   const [participants, setParticipants] = useState([]);
   const [screenSharerUid, setScreenSharerUid] = useState(null);
   const [screenSharerName, setScreenSharerName] = useState('');
+  const [pinnedId, setPinnedId] = useState(null); // 'local' or a remote agora uid
   const [isMuted, setIsMuted] = useState(true);
   const [isVideoOff, setIsVideoOff] = useState(false);
   const [showChat, setShowChat] = useState(false);
@@ -124,9 +125,27 @@ export default function MeetingRoom() {
   // agoraUid is included here — the backend stores it against this socket
   // and broadcasts it to everyone else, so remote clients can map an
   // incoming Agora video stream's numeric uid back to a name.
+  //
+  // IMPORTANT: this used to only run once (on mount, when `joined` first
+  // became true). socket.io-client keeps reconnecting the SAME client
+  // instance under the hood after any drop (flaky mobile network, Render
+  // free-tier idling out, etc) — `socket` never changes identity, so this
+  // effect never re-ran. The server, meanwhile, sees a brand-new socket.id
+  // on every reconnect and has already forgotten the old one, so the
+  // client silently stopped receiving 'participant:joined', 'chat:message',
+  // and every other room broadcast until the page was hard-reloaded.
+  // Fix: listen for socket.io's own 'connect' event (fires on the initial
+  // connect AND every reconnect) and re-run the join handshake each time.
   useEffect(() => {
-    if (!socket || !meetingId || !joined) return;
-    socket.emit('meeting:join', { meetingId, agoraUid });
+    if (!socket || !meetingId) return;
+
+    const doJoin = () => {
+      if (joined) socket.emit('meeting:join', { meetingId, agoraUid });
+    };
+
+    doJoin(); // covers the normal case where we're already connected
+    socket.on('connect', doJoin);
+    return () => socket.off('connect', doJoin);
   }, [socket, meetingId, joined, agoraUid]);
 
   // ── SOCKET EVENTS ─────────────────────────────────────────────────────────
@@ -354,6 +373,18 @@ export default function MeetingRoom() {
     }
   };
 
+  // Click/tap a tile's profile to pin it large in the grid; tap again to unpin.
+  const handleTogglePin = (id) => {
+    setPinnedId((prev) => (prev === id ? null : id));
+  };
+
+  // If the pinned participant leaves the call, drop the pin instead of
+  // showing an empty large tile.
+  useEffect(() => {
+    if (pinnedId == null || pinnedId === 'local') return;
+    if (!remoteUsers.some((u) => u.uid === pinnedId)) setPinnedId(null);
+  }, [remoteUsers, pinnedId]);
+
   const handleReaction = (emoji) => {
     socket?.emit('reaction', { meetingId, emoji });
     const id = Date.now();
@@ -410,6 +441,7 @@ export default function MeetingRoom() {
 
   const allVideoUsers = [
     {
+      id: 'local',
       isLocal: true,
       videoTrack: localVideoTrack,
       audioTrack: localAudioTrack,
@@ -422,6 +454,7 @@ export default function MeetingRoom() {
     ...remoteUsers
       .filter((u) => u.uid !== screenSharerUid)
       .map((u) => ({
+        id: u.uid,
         isLocal: false,
         uid: u.uid,
         videoTrack: u.videoTrack,
@@ -433,6 +466,9 @@ export default function MeetingRoom() {
       })),
   ];
 
+  const pinnedUser = pinnedId != null ? allVideoUsers.find((u) => u.id === pinnedId) : null;
+  const otherUsers = pinnedUser ? allVideoUsers.filter((u) => u.id !== pinnedId) : allVideoUsers;
+
   const hasScreenShare = !!(screenShareUser || isScreenSharing);
 
   return (
@@ -441,22 +477,22 @@ export default function MeetingRoom() {
 
       <div className="flex-1 flex flex-col min-w-0">
         {/* Header */}
-        <div className="flex items-center justify-between px-4 py-2 bg-gray-800 border-b border-gray-700">
-          <div>
-            <h1 className="font-semibold text-sm">{meetingInfo?.title || 'Meeting'}</h1>
+        <div className="flex flex-wrap items-center justify-between gap-2 px-3 sm:px-4 py-2 bg-gray-800 border-b border-gray-700">
+          <div className="min-w-0">
+            <h1 className="font-semibold text-sm truncate max-w-[50vw] sm:max-w-none">{meetingInfo?.title || 'Meeting'}</h1>
             <button
-              className="text-xs text-gray-400 hover:text-white"
+              className="text-xs text-gray-400 hover:text-white truncate"
               onClick={() => { navigator.clipboard.writeText(meetingId); toast('Meeting ID copied!'); }}
             >
               {meetingId} · tap to copy
             </button>
           </div>
-          <div className="flex items-center gap-3">
-            <div className="text-xs text-gray-400">{participants.length + 1} participants</div>
+          <div className="flex items-center gap-2 sm:gap-3 shrink-0">
+            <div className="text-xs text-gray-400 whitespace-nowrap">{participants.length + 1} participants</div>
             {isHost && (
               <button
                 onClick={handleEndMeeting}
-                className="px-3 py-1.5 bg-red-600 hover:bg-red-700 transition-colors rounded-lg text-xs font-semibold"
+                className="px-2.5 sm:px-3 py-1.5 bg-red-600 hover:bg-red-700 transition-colors rounded-lg text-xs font-semibold whitespace-nowrap"
               >
                 End Meeting
               </button>
@@ -465,8 +501,8 @@ export default function MeetingRoom() {
         </div>
 
         {/* Video area */}
-        <div className="flex-1 overflow-hidden p-2">
-          {/* Screen share — full width when active */}
+        <div className="flex-1 overflow-hidden p-1.5 sm:p-2">
+          {/* Screen share — full width when active (takes priority over pin) */}
           {hasScreenShare && (
             <div className="w-full h-2/3 mb-2 rounded-xl overflow-hidden bg-black relative">
               <div className="absolute top-2 left-2 z-10 bg-black/60 text-xs px-2 py-1 rounded">
@@ -486,26 +522,66 @@ export default function MeetingRoom() {
             </div>
           )}
 
-          {/* Participant grid */}
-          <div
-            className={`grid gap-2 ${hasScreenShare ? 'h-1/3' : 'h-full'} ${
-              allVideoUsers.length === 1 ? 'grid-cols-1' :
-              allVideoUsers.length <= 4 ? 'grid-cols-2' : 'grid-cols-3'
-            }`}
-          >
-            {allVideoUsers.map((u) => (
-              <VideoTile
-                key={u.isLocal ? 'local' : u.uid}
-                videoTrack={u.videoTrack}
-                audioTrack={u.audioTrack}
-                isLocal={u.isLocal}
-                name={u.name}
-                isMuted={u.isMuted}
-                isVideoOff={u.isVideoOff}
-                audioLevel={u.isLocal ? audioLevel : undefined}
-              />
-            ))}
-          </div>
+          {/* Pinned participant — large, everyone else in a thumbnail strip.
+              Tapping a tile's profile toggles the pin (see VideoTile's onPin). */}
+          {!hasScreenShare && pinnedUser ? (
+            <div className="flex flex-col h-full gap-2">
+              <div className="flex-1 min-h-0">
+                <VideoTile
+                  videoTrack={pinnedUser.videoTrack}
+                  audioTrack={pinnedUser.audioTrack}
+                  isLocal={pinnedUser.isLocal}
+                  name={pinnedUser.name}
+                  isMuted={pinnedUser.isMuted}
+                  isVideoOff={pinnedUser.isVideoOff}
+                  audioLevel={pinnedUser.isLocal ? audioLevel : undefined}
+                  isPinned
+                  onPin={() => handleTogglePin(pinnedUser.id)}
+                />
+              </div>
+              {otherUsers.length > 0 && (
+                <div className="flex gap-2 overflow-x-auto h-20 sm:h-24 shrink-0 pb-1">
+                  {otherUsers.map((u) => (
+                    <div key={u.id} className="h-full aspect-video shrink-0">
+                      <VideoTile
+                        videoTrack={u.videoTrack}
+                        audioTrack={u.audioTrack}
+                        isLocal={u.isLocal}
+                        name={u.name}
+                        isMuted={u.isMuted}
+                        isVideoOff={u.isVideoOff}
+                        audioLevel={u.isLocal ? audioLevel : undefined}
+                        onPin={() => handleTogglePin(u.id)}
+                      />
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
+          ) : (
+            /* Participant grid — 1 col on phones, more columns as space/count allow */
+            <div
+              className={`grid gap-1.5 sm:gap-2 ${hasScreenShare ? 'h-1/3' : 'h-full'} ${
+                allVideoUsers.length === 1 ? 'grid-cols-1' :
+                allVideoUsers.length <= 4 ? 'grid-cols-2' :
+                'grid-cols-2 sm:grid-cols-3'
+              }`}
+            >
+              {allVideoUsers.map((u) => (
+                <VideoTile
+                  key={u.id}
+                  videoTrack={u.videoTrack}
+                  audioTrack={u.audioTrack}
+                  isLocal={u.isLocal}
+                  name={u.name}
+                  isMuted={u.isMuted}
+                  isVideoOff={u.isVideoOff}
+                  audioLevel={u.isLocal ? audioLevel : undefined}
+                  onPin={hasScreenShare ? undefined : () => handleTogglePin(u.id)}
+                />
+              ))}
+            </div>
+          )}
         </div>
 
         {/* Floating reactions */}
@@ -552,10 +628,13 @@ export default function MeetingRoom() {
       {/* Participants panel */}
       {showParticipants && (
         <ParticipantsPanel
+          meetingId={meetingId}
           participants={participants}
           currentUser={user}
           isHost={isHost}
           handRaisers={handRaisers}
+          pinnedId={pinnedId}
+          onTogglePin={handleTogglePin}
           onMute={handleAdminMute}
           onUnmute={handleAdminUnmute}
           onKick={handleAdminKick}
