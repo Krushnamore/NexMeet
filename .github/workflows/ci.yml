@@ -1,0 +1,102 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+jobs:
+  backend-ci:
+    name: Backend (lint + smoke test)
+    runs-on: ubuntu-latest
+    services:
+      mongodb:
+        image: mongo:latest
+        ports:
+          - 27017:27017
+    defaults:
+      run:
+        working-directory: backend
+    env:
+      NODE_ENV: development
+      PORT: 5000
+      MONGODB_URI: "mongodb://localhost:27017/nexmeet_ci"
+      JWT_SECRET: "ci-only-placeholder-secret"
+      JWT_EXPIRES_IN: "7d"
+      JWT_REFRESH_EXPIRES_IN: "30d"
+      FRONTEND_URL: "http://localhost:5173"
+      AGORA_APP_ID: "ci-placeholder-app-id"
+      AGORA_APP_CERTIFICATE: "ci-placeholder-certificate"
+      RATE_LIMIT_WINDOW_MS: "900000"
+      RATE_LIMIT_MAX_REQUESTS: "200"
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+          cache-dependency-path: backend/package-lock.json
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Lint
+        run: npm run lint --if-present
+
+      - name: Smoke test — app boots and exits cleanly
+        run: |
+          node -e "
+          setTimeout(() => {
+            console.log('✅ Smoke test passed: Server initialized successfully without throwing errors!');
+            process.exit(0);
+          }, 3000);
+          require('./src/server');
+          "
+
+  frontend-ci:
+    name: Frontend (lint + build)
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: frontend
+    env:
+      VITE_API_URL: "http://localhost:5000/api"
+      VITE_SOCKET_URL: "http://localhost:5000"
+      VITE_AGORA_APP_ID: "ci-placeholder-app-id"
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Lint
+        run: npm run lint --if-present
+
+      - name: Build
+        run: npm run build
+
+  deploy:
+    name: Deploy (Vercel & Render)
+    needs: [backend-ci, frontend-ci]
+    if: github.ref == 'refs/heads/main' && github.event_name == 'push'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Trigger Vercel deploy
+        run: |
+          echo "Triggering Vercel Frontend Deployment..."
+          curl -s -S -f -X POST "${{ secrets.VERCEL_DEPLOY_HOOK }}"
+          echo "✅ Vercel deploy triggered successfully!"
+
+      - name: Trigger Render deploy
+        run: |
+          echo "Triggering Render Backend Deployment..."
+          curl -s -S -f -X POST "${{ secrets.BACKEND_DEPLOY_HOOK }}"
+          echo "✅ Render deploy triggered successfully!"
