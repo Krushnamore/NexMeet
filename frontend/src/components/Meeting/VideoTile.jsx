@@ -16,6 +16,8 @@ export default function VideoTile({
   isMuted = false,
   isVideoOff = false,
   audioLevel = 0,
+  isPinned = false,
+  onPin,
 }) {
   const containerRef = useRef(null);
 
@@ -50,14 +52,21 @@ export default function VideoTile({
   }, [audioTrack, isLocal]);
 
   const speaking = audioLevel > 8;
+  const pinnable = !isScreen && typeof onPin === 'function';
 
   return (
     <div
-      className="relative w-full h-full rounded-xl overflow-hidden bg-gray-800 flex items-center justify-center"
+      className="relative w-full h-full rounded-xl overflow-hidden bg-gray-800 flex items-center justify-center touch-manipulation"
+      onClick={pinnable ? onPin : undefined}
+      role={pinnable ? 'button' : undefined}
+      title={pinnable ? (isPinned ? 'Tap to unpin' : 'Tap to pin') : undefined}
       style={{
-        outline: speaking ? '2px solid rgba(74,222,128,0.8)' : 'none',
+        outline: isPinned
+          ? '2px solid rgba(96,165,250,0.9)'
+          : speaking ? '2px solid rgba(74,222,128,0.8)' : 'none',
         transition: 'outline 0.15s',
         minHeight: '120px',
+        cursor: pinnable ? 'pointer' : 'default',
       }}
     >
       {/* Agora renders video into this div */}
@@ -72,11 +81,11 @@ export default function VideoTile({
 
       {/* Avatar — shown when no video */}
       {(!videoTrack || isVideoOff) && !isScreen && (
-        <div className="z-10 flex flex-col items-center gap-2">
-          <div className="w-16 h-16 rounded-full bg-blue-600 flex items-center justify-center text-2xl font-bold text-white select-none">
+        <div className="z-10 flex flex-col items-center gap-2 px-2">
+          <div className="w-12 h-12 sm:w-16 sm:h-16 rounded-full bg-blue-600 flex items-center justify-center text-xl sm:text-2xl font-bold text-white select-none">
             {name?.[0]?.toUpperCase() || '?'}
           </div>
-          <span className="text-xs text-gray-400">{name}</span>
+          <span className="text-xs text-gray-400 truncate max-w-full">{name}</span>
         </div>
       )}
 
@@ -84,6 +93,13 @@ export default function VideoTile({
       {videoTrack && !isVideoOff && (
         <div className="absolute bottom-2 left-2 bg-black/60 text-white text-xs px-2 py-0.5 rounded-md z-20 max-w-[80%] truncate">
           {name}
+        </div>
+      )}
+
+      {/* Pinned indicator */}
+      {isPinned && (
+        <div className="absolute top-2 left-2 bg-blue-600/90 text-white text-[10px] font-semibold px-1.5 py-0.5 rounded z-20">
+          📌 Pinned
         </div>
       )}
 
