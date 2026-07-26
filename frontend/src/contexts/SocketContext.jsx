@@ -2,62 +2,54 @@ import { createContext, useContext, useEffect, useRef, useState } from 'react';
 import { io } from 'socket.io-client';
 
 const SocketContext = createContext(null);
+
 export const useSocket = () => useContext(SocketContext);
 
 export const SocketProvider = ({ children }) => {
   const socketRef = useRef(null);
   const [connected, setConnected] = useState(false);
 
-  const connect = (token) => {
-    // ✅ FIX 1: Prevent duplicate ghost sockets in React. 
-    // Do NOT check .connected here. If the instance exists, return it.
-    if (socketRef.current) return socketRef.current;
+  useEffect(() => {
+    const token = localStorage.getItem('accessToken');
+    if (!token) return;
 
-    // Use the exact backend URL
-    const socketUrl = import.meta.env.VITE_SOCKET_URL || 'http://localhost:5000';
+    const SOCKET_URL = import.meta.env.VITE_SOCKET_URL || window.location.origin;
 
-    const socket = io(socketUrl, {
+    const socket = io(SOCKET_URL, {
       auth: { token },
       transports: ['websocket', 'polling'],
       reconnection: true,
-      reconnectionAttempts: 5,
+      reconnectionAttempts: 10,
       reconnectionDelay: 1000,
-    });
-
-    socket.on('connect', () => { 
-      console.log('✅ Socket fully connected with ID:', socket.id);
-      setConnected(true); 
-    });
-    
-    socket.on('disconnect', () => { 
-      console.warn('❌ Socket disconnected');
-      setConnected(false); 
-    });
-
-    socket.on('connect_error', (err) => {
-      console.error('⚠️ Socket connect error:', err.message);
+      reconnectionDelayMax: 5000,
+      timeout: 20000,
     });
 
     socketRef.current = socket;
-    return socket;
-  };
 
-  const disconnect = () => {
-    if (socketRef.current) {
-      socketRef.current.disconnect();
-      socketRef.current = null;
+    socket.on('connect', () => {
+      console.log('✅ Socket connected:', socket.id);
+      setConnected(true);
+    });
+
+    socket.on('disconnect', (reason) => {
+      console.warn('⚠️ Socket disconnected:', reason);
       setConnected(false);
-    }
-  };
+    });
 
-  const getSocket = () => socketRef.current;
+    socket.on('connect_error', (err) => {
+      console.error('❌ Socket connect error:', err.message);
+      setConnected(false);
+    });
 
-  useEffect(() => {
-    return () => disconnect();
+    return () => {
+      socket.disconnect();
+      socketRef.current = null;
+    };
   }, []);
 
   return (
-    <SocketContext.Provider value={{ connect, disconnect, getSocket, connected }}>
+    <SocketContext.Provider value={{ socket: socketRef.current, connected }}>
       {children}
     </SocketContext.Provider>
   );

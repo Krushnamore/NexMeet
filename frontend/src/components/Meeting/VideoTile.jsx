@@ -1,172 +1,80 @@
 import { useEffect, useRef } from 'react';
 
-const Avatar = ({ name, size = 72 }) => {
-  const initials = name?.split(' ').map(n => n[0]).join('').toUpperCase().slice(0, 2) || '?';
-  return (
-    <div style={{
-      width: size, height: size, borderRadius: '50%',
-      background: 'linear-gradient(135deg, #3b82f6, #8b5cf6)',
-      display: 'flex', alignItems: 'center', justifyContent: 'center',
-      fontSize: size * 0.35, fontWeight: 700, color: '#fff',
-      fontFamily: 'Syne, sans-serif', letterSpacing: '-0.02em', flexShrink: 0,
-    }}>
-      {initials}
-    </div>
-  );
-};
+// Inline mic-off SVG — no @heroicons/react needed
+const MicOffIcon = () => (
+  <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="currentColor" className="w-3 h-3 text-white">
+    <path d="M13.5 4.06c0-1.336-1.616-2.005-2.56-1.06l-4.5 4.5H4.508c-1.141 0-2.318.664-2.66 1.905A9.76 9.76 0 001.5 12c0 .898.121 1.768.35 2.595.232.837.92 1.405 1.757 1.405H4.5c.98 0 1.784-.803 1.784-1.784V9.696l1.5-1.5v6.838a1.784 1.784 0 001.784 1.784h.432l6-6V4.06z" />
+    <path d="M15.75 7.719V13.5a3.75 3.75 0 01-7.5 0v-1.032l-1.5 1.5V13.5a5.25 5.25 0 0010.5 0V6.219l-1.5 1.5z" />
+    <path d="M3.53 2.47a.75.75 0 00-1.06 1.06l18 18a.75.75 0 101.06-1.06l-18-18z" />
+  </svg>
+);
 
 export default function VideoTile({
-  uid, name, videoTrack, audioTrack,
-  isMuted, isVideoOff, isLocal = false,
-  isScreenShare = false, isHandRaised = false,
-  isPinned = false, reaction = null,
-  onPin, className = '', style = {},
+  videoTrack,
+  audioTrack,
+  isLocal = false,
+  isScreen = false,
+  name = '',
+  isMuted = false,
+  isVideoOff = false,
+  audioLevel = 0,
 }) {
-  const containerRef = useRef(null);
-  const playingTrackRef = useRef(null);
+  const videoRef = useRef(null);
 
+  // Play video track
   useEffect(() => {
-    const container = containerRef.current;
-    if (!container) return;
+    if (!videoTrack || !videoRef.current) return;
+    videoTrack.play(videoRef.current);
+    return () => { try { videoTrack.stop(); } catch (_) {} };
+  }, [videoTrack]);
 
-    // Stop old track if different track comes in
-    if (playingTrackRef.current && playingTrackRef.current !== videoTrack) {
-      try { playingTrackRef.current.stop(); } catch {}
-      playingTrackRef.current = null;
-    }
-
-    if (videoTrack && !isVideoOff) {
-      try {
-        videoTrack.play(container);
-        playingTrackRef.current = videoTrack;
-      } catch (err) {
-        console.warn('Video play error for', name, ':', err.message);
-      }
-    } else {
-      if (playingTrackRef.current) {
-        try { playingTrackRef.current.stop(); } catch {}
-        playingTrackRef.current = null;
-      }
-    }
-
-    return () => {
-      if (playingTrackRef.current) {
-        try { playingTrackRef.current.stop(); } catch {}
-        playingTrackRef.current = null;
-      }
-    };
-  }, [videoTrack, isVideoOff, name]);
-
-  // Play remote audio separately
+  // Play remote audio — never play local (avoids echo)
   useEffect(() => {
-    if (!isLocal && audioTrack) {
-      try { audioTrack.play(); } catch (err) {
-        console.warn('Audio play error:', err.message);
-      }
-    }
-    return () => {
-      if (!isLocal && audioTrack) {
-        try { audioTrack.stop(); } catch {}
-      }
-    };
+    if (!audioTrack || isLocal) return;
+    audioTrack.play();
+    return () => { try { audioTrack.stop(); } catch (_) {} };
   }, [audioTrack, isLocal]);
 
-  const hasVideo = !!(videoTrack && !isVideoOff);
+  const ringOpacity = Math.min(1, audioLevel / 40);
+  const speaking = audioLevel > 5;
 
   return (
     <div
-      onClick={onPin}
-      className={className}
+      className="relative w-full h-full rounded-xl overflow-hidden bg-gray-800 flex items-center justify-center"
       style={{
-        position: 'relative', overflow: 'hidden', borderRadius: 16,
-        background: '#0d1520', cursor: 'pointer',
-        border: `2px solid ${isPinned ? '#8b5cf6' : 'var(--border)'}`,
-        display: 'flex', alignItems: 'center', justifyContent: 'center',
-        width: '100%', height: '100%', aspectRatio: '16/9',
-        ...style,
+        outline: speaking ? `2px solid rgba(74,222,128,${ringOpacity})` : 'none',
+        transition: 'outline 0.1s',
       }}
     >
-      {/* Video container */}
+      {/* Video element */}
       <div
-        ref={containerRef}
+        ref={videoRef}
+        className="absolute inset-0 w-full h-full"
         style={{
-          position: 'absolute', inset: 0,
-          width: '100%', height: '100%',
-          display: hasVideo ? 'block' : 'none',
-          background: '#000', overflow: 'hidden',
+          display: videoTrack && !isVideoOff ? 'block' : 'none',
+          transform: isLocal && !isScreen ? 'scaleX(-1)' : 'none',
+          objectFit: isScreen ? 'contain' : 'cover',
         }}
       />
 
-      {/* Avatar when no video */}
-      {!hasVideo && (
-        <div style={{
-          display: 'flex', flexDirection: 'column',
-          alignItems: 'center', justifyContent: 'center',
-          width: '100%', height: '100%', gap: 8,
-        }}>
-          <Avatar name={name} size={72} />
-          <span style={{
-            fontSize: '0.75rem', color: 'var(--text-muted)',
-            fontFamily: 'Syne, sans-serif',
-          }}>
-            {isVideoOff ? 'Camera off' : 'No video'}
-          </span>
+      {/* Avatar fallback */}
+      {(!videoTrack || isVideoOff) && !isScreen && (
+        <div className="flex flex-col items-center gap-2 z-10">
+          <div className="w-16 h-16 rounded-full bg-blue-600 flex items-center justify-center text-2xl font-bold text-white select-none">
+            {name?.[0]?.toUpperCase() || '?'}
+          </div>
         </div>
       )}
 
-      {/* Badges top */}
-      <div style={{
-        position: 'absolute', top: 8, left: 8, right: 8,
-        display: 'flex', justifyContent: 'space-between', zIndex: 5, pointerEvents: 'none',
-      }}>
-        {isScreenShare && (
-          <span style={{ background: 'rgba(59,130,246,0.9)', color: '#fff', padding: '2px 8px', borderRadius: 6, fontSize: '0.7rem', fontFamily: 'Syne, sans-serif', fontWeight: 600 }}>
-            🖥️ Screen
-          </span>
-        )}
-        {isPinned && (
-          <span style={{ background: 'rgba(139,92,246,0.9)', color: '#fff', padding: '2px 8px', borderRadius: 6, fontSize: '0.7rem', fontFamily: 'Syne, sans-serif', fontWeight: 600, marginLeft: 'auto' }}>
-            📌 Pinned
-          </span>
-        )}
+      {/* Name tag */}
+      <div className="absolute bottom-2 left-2 bg-black/60 text-white text-xs px-2 py-0.5 rounded-md z-20 max-w-[80%] truncate">
+        {name}
       </div>
 
-      {/* Bottom bar */}
-      <div style={{
-        position: 'absolute', bottom: 0, left: 0, right: 0,
-        background: 'linear-gradient(transparent, rgba(0,0,0,0.85))',
-        padding: '24px 10px 8px',
-        display: 'flex', alignItems: 'center', justifyContent: 'space-between', zIndex: 5,
-      }}>
-        <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
-          <span style={{
-            background: 'rgba(0,0,0,0.65)', backdropFilter: 'blur(8px)',
-            padding: '2px 8px', borderRadius: 6, fontSize: '0.75rem',
-            color: '#fff', fontFamily: 'Syne, sans-serif', fontWeight: 600,
-            maxWidth: 160, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap',
-          }}>
-            {name || 'User'}{isLocal ? ' (You)' : ''}
-          </span>
-          {isHandRaised && <span style={{ fontSize: 16 }}>✋</span>}
-        </div>
-        <div style={{ display: 'flex', gap: 4 }}>
-          {isMuted && (
-            <div style={{ width: 22, height: 22, borderRadius: 6, background: '#ef4444', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 11 }}>🔇</div>
-          )}
-          {!hasVideo && (
-            <div style={{ width: 22, height: 22, borderRadius: 6, background: 'rgba(0,0,0,0.6)', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 11 }}>📷</div>
-          )}
-        </div>
-      </div>
-
-      {/* Reaction */}
-      {reaction && (
-        <div style={{
-          position: 'absolute', top: '30%', left: '50%',
-          transform: 'translateX(-50%)', fontSize: '3rem', zIndex: 10,
-          animation: 'reactionFloat 2s ease-out forwards', pointerEvents: 'none',
-        }}>
-          {reaction}
+      {/* Muted indicator */}
+      {isMuted && !isScreen && (
+        <div className="absolute top-2 right-2 bg-red-600 rounded-full p-1 z-20">
+          <MicOffIcon />
         </div>
       )}
     </div>

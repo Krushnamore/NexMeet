@@ -1,305 +1,290 @@
-import { useState, useRef, useCallback } from 'react';
+import { useState, useEffect, useRef, useCallback } from 'react';
 import AgoraRTC from 'agora-rtc-sdk-ng';
 
-AgoraRTC.setLogLevel(3);
+AgoraRTC.setLogLevel(2);
 
-export const useAgoraRTC = () => {
-  const clientRef = useRef(null);
-  const localTracksRef = useRef({ audio: null, video: null, screen: null });
-  const joinedRef = useRef(false);
-  const [localAudioTrack, setLocalAudioTrack] = useState(null);
+const isIOS     = () => /iPhone|iPad|iPod/i.test(navigator.userAgent);
+const isAndroid = () => /Android/i.test(navigator.userAgent);
+
+const useAgoraRTC = ({ appId, channel, token, uid, onUserJoined, onUserLeft }) => {
+  const clientRef         = useRef(null);
+  const localAudioRef     = useRef(null);
+  const localVideoRef     = useRef(null);
+  const screenTrackRef    = useRef(null);
+  const screenClientRef   = useRef(null);
+  const audioLevelTimerRef = useRef(null);
+
   const [localVideoTrack, setLocalVideoTrack] = useState(null);
-  const [remoteUsers, setRemoteUsers] = useState([]);
-  const [isAudioMuted, setIsAudioMuted] = useState(false);
-  const [isVideoOff, setIsVideoOff] = useState(false);
+  const [localAudioTrack, setLocalAudioTrack] = useState(null);
+  const [remoteUsers,     setRemoteUsers]     = useState([]);
   const [isScreenSharing, setIsScreenSharing] = useState(false);
-  const [connectionState, setConnectionState] = useState('DISCONNECTED');
-  const [networkQuality, setNetworkQuality] = useState({ uplink: 0, downlink: 0 });
-  const [deviceError, setDeviceError] = useState({ audio: null, video: null });
+  const [audioLevel,      setAudioLevel]      = useState(0);
+  const [joined,          setJoined]          = useState(false);
+  const [error,           setError]           = useState(null);
 
-  const getClient = () => {
-    if (!clientRef.current) {
-      clientRef.current = AgoraRTC.createClient({ mode: 'rtc', codec: 'vp8' });
-    }
-    return clientRef.current;
-  };
+  // ── INIT ────────────────────────────────────────────────────────────────
+  useEffect(() => {
+    if (!appId || !channel || !token) return;
 
-  const join = useCallback(async ({ channelName, uid }) => {
-    if (joinedRef.current) {
-      console.warn('Already joined, skipping duplicate join');
-      return {
-        audioTrack: localTracksRef.current.audio,
-        videoTrack: localTracksRef.current.video,
-        errors: {},
-      };
-    }
-    joinedRef.current = true;
+    const client = AgoraRTC.createClient({ mode: 'rtc', codec: 'vp8' });
+    clientRef.current = client;
 
-    const client = getClient();
-
-    client.on('user-published', async (user, mediaType) => {
-      try {
-        await client.subscribe(user, mediaType);
-        if (mediaType === 'audio' && user.audioTrack) {
-          user.audioTrack.play();
-        }
-        setRemoteUsers(prev => {
-          const others = prev.filter(u => u.uid !== user.uid);
-          return [...others, {
-            uid: user.uid,
-            videoTrack: user.videoTrack,
-            audioTrack: user.audioTrack,
-            hasVideo: user.hasVideo,
-            hasAudio: user.hasAudio,
-            _ts: Date.now(),
-          }];
-        });
-      } catch (err) {
-        console.error('Subscribe error:', err);
-      }
-    });
-
-    client.on('user-unpublished', (user, mediaType) => {
-      if (mediaType === 'audio' && user.audioTrack) {
-        try { user.audioTrack.stop(); } catch {}
-      }
-      setRemoteUsers(prev => {
-        const others = prev.filter(u => u.uid !== user.uid);
-        return [...others, {
-          uid: user.uid,
-          videoTrack: user.videoTrack,
-          audioTrack: user.audioTrack,
-          hasVideo: user.hasVideo,
-          hasAudio: user.hasAudio,
-          _ts: Date.now(),
-        }];
+    const handleUserPublished = async (user, mediaType) => {
+      await client.subscribe(user, mediaType);
+      setRemoteUsers((prev) => {
+        const exists = prev.find((u) => u.uid === user.uid);
+        return exists
+          ? prev.map((u) => (u.uid === user.uid ? { ...u, ...user } : u))
+          : [...prev, user];
       });
-    });
+      onUserJoined?.(user, mediaType);
+    };
 
-    client.on('user-left', (user) => {
-      setRemoteUsers(prev => prev.filter(u => u.uid !== user.uid));
-    });
-
-    client.on('connection-state-change', (state) => setConnectionState(state));
-
-    client.on('network-quality', (stats) => {
-      setNetworkQuality({
-        uplink: stats.uplinkNetworkQuality,
-        downlink: stats.downlinkNetworkQuality,
-      });
-    });
-
-    let appId = import.meta.env.VITE_AGORA_APP_ID;
-    if (!appId || appId.trim() === '') {
-      try {
-        const res = await fetch(
-          `${import.meta.env.VITE_API_URL || 'http://localhost:5000/api'}/agora/app-id`,
-          { headers: { Authorization: `Bearer ${localStorage.getItem('accessToken')}` } }
-        );
-        const data = await res.json();
-        appId = data.appId;
-      } catch {
-        joinedRef.current = false;
-        throw new Error('Agora App ID missing');
-      }
-    }
-
-    try {
-      await client.join(appId, channelName, null, uid);
-      console.log('✅ Agora joined:', channelName, 'uid:', uid);
-    } catch (err) {
-      joinedRef.current = false;
-      throw err;
-    }
-
-    let audioTrack = null;
-    let videoTrack = null;
-    const errors = { audio: null, video: null };
-
-    // Create mic and camera in PARALLEL for faster startup
-    const [audioResult, videoResult] = await Promise.allSettled([
-      AgoraRTC.createMicrophoneAudioTrack({
-        encoderConfig: {
-          sampleRate: 48000,
-          stereo: false,
-          bitrate: 64,
-        },
-        AEC: true,
-        ANS: true,
-        AGC: true,
-      }),
-      AgoraRTC.createCameraVideoTrack({
-        encoderConfig: {
-          width: 640,
-          height: 480,
-          frameRate: 24,
-          bitrateMax: 800,
-          bitrateMin: 200,
-        },
-        facingMode: 'user',
-        optimizationMode: 'motion',
-      }),
-    ]);
-
-    if (audioResult.status === 'fulfilled') {
-      audioTrack = audioResult.value;
-      localTracksRef.current.audio = audioTrack;
-      setLocalAudioTrack(audioTrack);
-      console.log('✅ Mic ready');
-    } else {
-      const err = audioResult.reason;
-      console.warn('❌ Mic error:', err.name, err.message);
-      if (err.name === 'NotAllowedError') errors.audio = 'Mic blocked. Click 🔒 → allow Microphone → refresh.';
-      else if (err.name === 'NotFoundError') errors.audio = 'No microphone found.';
-      else if (err.name === 'NotReadableError') errors.audio = 'Mic busy. Close other apps.';
-      else errors.audio = err.message;
-    }
-
-    if (videoResult.status === 'fulfilled') {
-      videoTrack = videoResult.value;
-      localTracksRef.current.video = videoTrack;
-      setLocalVideoTrack(videoTrack);
-      console.log('✅ Camera ready');
-    } else {
-      const err = videoResult.reason;
-      console.warn('❌ Camera error:', err.name, err.message);
-      if (err.name === 'NotAllowedError') errors.video = 'Camera blocked. Click 🔒 → allow Camera → refresh.';
-      else if (err.name === 'NotFoundError') errors.video = 'No camera found.';
-      else if (err.name === 'NotReadableError') errors.video = 'Camera busy. Use a different browser.';
-      else errors.video = err.message;
-    }
-
-    setDeviceError(errors);
-
-    const tracksToPublish = [audioTrack, videoTrack].filter(Boolean);
-    if (tracksToPublish.length > 0) {
-      await client.publish(tracksToPublish);
-      console.log('✅ Published', tracksToPublish.length, 'track(s)');
-    }
-
-    return { audioTrack, videoTrack, errors };
-  }, []);
-
-  const leave = useCallback(async () => {
-    const client = clientRef.current;
-    if (!client) return;
-    Object.values(localTracksRef.current).forEach(track => {
-      if (track) { try { track.stop(); track.close(); } catch {} }
-    });
-    localTracksRef.current = { audio: null, video: null, screen: null };
-    try { await client.leave(); } catch {}
-    clientRef.current = null;
-    joinedRef.current = false;
-    setLocalAudioTrack(null);
-    setLocalVideoTrack(null);
-    setRemoteUsers([]);
-    setIsAudioMuted(false);
-    setIsVideoOff(false);
-    setIsScreenSharing(false);
-    setConnectionState('DISCONNECTED');
-    setDeviceError({ audio: null, video: null });
-  }, []);
-
-  const toggleAudio = useCallback(async () => {
-    const track = localTracksRef.current.audio;
-    if (!track) return false;
-    const newMuted = !isAudioMuted;
-    await track.setMuted(newMuted);
-    setIsAudioMuted(newMuted);
-    return newMuted;
-  }, [isAudioMuted]);
-
-  const toggleVideo = useCallback(async () => {
-    const track = localTracksRef.current.video;
-    if (!track) return false;
-    const newOff = !isVideoOff;
-    await track.setMuted(newOff);
-    setIsVideoOff(newOff);
-    return newOff;
-  }, [isVideoOff]);
-
-  const startScreenShare = useCallback(async () => {
-    const client = clientRef.current;
-    if (!client) throw new Error('Not connected');
-
-    if (!navigator.mediaDevices?.getDisplayMedia) {
-      throw Object.assign(
-        new Error('Screen sharing is not supported on this browser/device.'),
-        { name: 'NotSupportedError' }
+    const handleUserUnpublished = (user) => {
+      setRemoteUsers((prev) =>
+        prev.map((u) => (u.uid === user.uid ? { ...u, ...user } : u))
       );
-    }
+    };
 
-    // ✅ FIX: Use flexible default configurations to prevent browser constraint errors
-    const screenTrack = await AgoraRTC.createScreenVideoTrack({}, 'auto');
+    const handleUserLeft = (user) => {
+      setRemoteUsers((prev) => prev.filter((u) => u.uid !== user.uid));
+      onUserLeft?.(user);
+    };
 
-    const videoTrack = localTracksRef.current.video;
-    if (videoTrack) {
-      // Unpublish camera video when screen sharing starts
-      try { await client.unpublish(videoTrack); } catch {}
-    }
+    client.on('user-published',   handleUserPublished);
+    client.on('user-unpublished', handleUserUnpublished);
+    client.on('user-left',        handleUserLeft);
 
-    await client.publish(screenTrack);
-    localTracksRef.current.screen = screenTrack;
+    const join = async () => {
+      try {
+        await client.join(appId, channel, token, uid);
+        console.log('✅ Agora joined:', channel, 'uid:', uid);
 
-    const stopFn = async () => {
-      if (localTracksRef.current.screen === screenTrack) {
-        await stopScreenShare();
+        // Audio with full echo/noise cancellation
+        const audioTrack = await AgoraRTC.createMicrophoneAudioTrack({
+          encoderConfig: 'music_standard',
+          AEC: true,  // Acoustic Echo Cancellation
+          ANS: true,  // Automatic Noise Suppression
+          AGC: true,  // Automatic Gain Control
+        });
+        localAudioRef.current = audioTrack;
+        setLocalAudioTrack(audioTrack);
+
+        // Camera
+        const videoTrack = await AgoraRTC.createCameraVideoTrack({
+          encoderConfig: {
+            width:       { ideal: 1280 },
+            height:      { ideal: 720  },
+            frameRate:   24,
+            bitrateMin:  400,
+            bitrateMax:  1500,
+          },
+          facingMode: 'user',
+        });
+        localVideoRef.current = videoTrack;
+        setLocalVideoTrack(videoTrack);
+
+        await client.publish([audioTrack, videoTrack]);
+        console.log('✅ Published 2 track(s)');
+        setJoined(true);
+
+        // Audio level meter (0-100, correct direction for volume bar)
+        audioLevelTimerRef.current = setInterval(() => {
+          const level = audioTrack.getVolumeLevel?.() ?? 0;
+          setAudioLevel(Math.round(level * 100));
+        }, 200);
+
+      } catch (err) {
+        console.error('Agora join error:', err);
+        setError(err.message || 'Failed to join call');
       }
     };
 
-    if (Array.isArray(screenTrack)) {
-      screenTrack[0]?.on('track-ended', stopFn);
-    } else {
-      screenTrack.on('track-ended', stopFn);
-    }
+    join();
 
-    setIsScreenSharing(true);
-    return screenTrack;
+    return () => {
+      clearInterval(audioLevelTimerRef.current);
+      client.off('user-published',   handleUserPublished);
+      client.off('user-unpublished', handleUserUnpublished);
+      client.off('user-left',        handleUserLeft);
+      localAudioRef.current?.close();
+      localVideoRef.current?.close();
+      screenTrackRef.current?.close();
+      screenClientRef.current?.leave();
+      client.leave();
+    };
+  }, [appId, channel, token, uid]);
+
+  // ── MUTE / UNMUTE ────────────────────────────────────────────────────────
+  const muteAudio = useCallback(async () => {
+    await localAudioRef.current?.setMuted(true);
   }, []);
 
+  const unmuteAudio = useCallback(async () => {
+    await localAudioRef.current?.setMuted(false);
+  }, []);
+
+  // ── VIDEO ON / OFF ───────────────────────────────────────────────────────
+  const disableVideo = useCallback(async () => {
+    await localVideoRef.current?.setMuted(true);
+  }, []);
+
+  const enableVideo = useCallback(async () => {
+    await localVideoRef.current?.setMuted(false);
+  }, []);
+
+  // ── STOP SCREEN SHARE ────────────────────────────────────────────────────
   const stopScreenShare = useCallback(async () => {
-    const client = clientRef.current;
-    if (!client) return;
+    try {
+      screenTrackRef.current?.close();
+      screenTrackRef.current = null;
+      await screenClientRef.current?.leave();
+      screenClientRef.current = null;
+      setIsScreenSharing(false);
+    } catch (err) {
+      console.error('stopScreenShare error:', err);
+    }
+  }, []);
 
-    const screenTrack = localTracksRef.current.screen;
-    if (screenTrack) {
+  // ── START SCREEN SHARE ───────────────────────────────────────────────────
+  const startScreenShare = useCallback(async () => {
+
+    // ── iOS: completely blocked by Apple, no workaround ──────────────────
+    if (isIOS()) {
+      throw new Error(
+        'Screen sharing is not supported on iPhone or iPad. This is an Apple restriction and cannot be worked around in a browser. Please use a laptop or desktop.'
+      );
+    }
+
+    // ── Android: tab capture only via getDisplayMedia ────────────────────
+    if (isAndroid()) {
+      if (!navigator.mediaDevices?.getDisplayMedia) {
+        throw new Error(
+          'Your browser does not support screen sharing. Please open this page in Chrome on Android and try again.'
+        );
+      }
+
       try {
-        if (Array.isArray(screenTrack)) {
-          await client.unpublish(screenTrack);
-          screenTrack.forEach(t => { try { t.stop(); t.close(); } catch {} });
-        } else {
-          await client.unpublish(screenTrack);
-          screenTrack.stop();
-          screenTrack.close();
+        // Request tab capture — Android Chrome 94+ supports this
+        const stream = await navigator.mediaDevices.getDisplayMedia({
+          video: {
+            preferCurrentTab: true, // share the current browser tab
+            frameRate:        { ideal: 15 },
+            width:            { ideal: 1280 },
+            height:           { ideal: 720  },
+          },
+          audio: false,
+        });
+
+        // Create a separate Agora client for the screen share stream
+        // so it appears as its own tile, never overlapping the camera
+        const screenClient = AgoraRTC.createClient({ mode: 'rtc', codec: 'vp8' });
+        screenClientRef.current = screenClient;
+
+        const screenUid = uid + 10000; // offset so it's a unique UID in the channel
+        await screenClient.join(appId, channel, token, screenUid);
+
+        // Wrap the native MediaStreamTrack in an Agora custom video track
+        const screenTrack = await AgoraRTC.createCustomVideoTrack({
+          mediaStreamTrack: stream.getVideoTracks()[0],
+          frameRate:   15,
+          bitrateMax:  1500,
+        });
+
+        screenTrackRef.current = screenTrack;
+        await screenClient.publish(screenTrack);
+
+        // Handle user clicking "Stop sharing" in the browser UI
+        stream.getVideoTracks()[0].addEventListener('ended', () => {
+          stopScreenShare();
+        });
+
+        setIsScreenSharing(true);
+        return screenUid;
+
+      } catch (err) {
+        screenClientRef.current?.leave();
+        screenClientRef.current = null;
+
+        if (err.name === 'NotAllowedError') {
+          throw new Error(
+            'Screen share permission was denied. Please tap Allow when the browser asks for permission.'
+          );
         }
-      } catch {}
-      localTracksRef.current.screen = null;
+        if (err.name === 'NotSupportedError') {
+          throw new Error(
+            'Tab sharing is not supported on this Android browser. Please use Chrome.'
+          );
+        }
+        throw new Error(`Screen share failed: ${err.message}`);
+      }
     }
 
-    const videoTrack = localTracksRef.current.video;
-    if (videoTrack && !isVideoOff) {
-      // Republish camera video if it wasn't turned off before sharing
-      try { await client.publish(videoTrack); } catch {}
+    // ── Desktop: full screen / window / tab picker ───────────────────────
+    if (!navigator.mediaDevices?.getDisplayMedia) {
+      throw new Error(
+        'Screen sharing is not supported in this browser. Please use Chrome, Edge, or Firefox.'
+      );
     }
 
-    setIsScreenSharing(false);
-  }, [isVideoOff]);
+    try {
+      const screenClient = AgoraRTC.createClient({ mode: 'rtc', codec: 'vp8' });
+      screenClientRef.current = screenClient;
+
+      const screenUid = uid + 10000;
+      await screenClient.join(appId, channel, token, screenUid);
+
+      const screenTrack = await AgoraRTC.createScreenVideoTrack(
+        {
+          encoderConfig: {
+            width:       { ideal: 1920, max: 1920 },
+            height:      { ideal: 1080, max: 1080 },
+            frameRate:   15,
+            bitrateMax:  3000,
+          },
+          optimizationMode: 'detail', // crisp text & UI
+        },
+        'disable' // don't capture system audio — avoids echo
+      );
+
+      screenTrackRef.current = screenTrack;
+      await screenClient.publish(screenTrack);
+
+      // Handle "Stop sharing" button in the browser toolbar
+      screenTrack.on('track-ended', () => {
+        stopScreenShare();
+      });
+
+      setIsScreenSharing(true);
+      return screenUid;
+
+    } catch (err) {
+      screenClientRef.current?.leave();
+      screenClientRef.current = null;
+
+      if (err.name === 'NotAllowedError') {
+        throw new Error('Screen share cancelled or permission denied.');
+      }
+      throw err;
+    }
+  }, [appId, channel, token, uid, stopScreenShare]);
 
   return {
-    join,
-    leave,
-    toggleAudio,
-    toggleVideo,
-    startScreenShare,
-    stopScreenShare,
     localVideoTrack,
     localAudioTrack,
     remoteUsers,
-    isAudioMuted,
-    isVideoOff,
     isScreenSharing,
-    connectionState,
-    networkQuality,
-    deviceError,
+    audioLevel,
+    joined,
+    error,
+    muteAudio,
+    unmuteAudio,
+    disableVideo,
+    enableVideo,
+    startScreenShare,
+    stopScreenShare,
+    client: clientRef.current,
   };
 };
+
+export default useAgoraRTC;

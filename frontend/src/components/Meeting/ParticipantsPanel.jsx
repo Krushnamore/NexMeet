@@ -1,74 +1,147 @@
-import api from '../../services/api';
-import { toast } from 'react-hot-toast';
+import { useState } from 'react';
 
-const Avatar = ({ name, size = 32 }) => (
-  <div style={{ width: size, height: size, borderRadius: 8, flexShrink: 0, background: 'linear-gradient(135deg, var(--accent), var(--purple))', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: size * 0.34, fontWeight: 700, color: '#fff', fontFamily: 'Syne, sans-serif' }}>
-    {name?.slice(0, 2).toUpperCase() || '??'}
-  </div>
-);
+// ── Inline SVG icons (no @heroicons/react needed) ──────────────────────────
+const MicOnIcon  = () => <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="currentColor" className="w-4 h-4"><path d="M8.25 4.5a3.75 3.75 0 117.5 0v8.25a3.75 3.75 0 11-7.5 0V4.5z"/><path d="M6 10.5a.75.75 0 01.75.75v1.5a5.25 5.25 0 1010.5 0v-1.5a.75.75 0 011.5 0v1.5a6.751 6.751 0 01-6 6.709v2.291h3a.75.75 0 010 1.5h-7.5a.75.75 0 010-1.5h3v-2.291a6.751 6.751 0 01-6-6.709v-1.5A.75.75 0 016 10.5z"/></svg>;
+const MicOffIcon = () => <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="currentColor" className="w-4 h-4"><path d="M8.25 4.5a3.75 3.75 0 117.5 0v8.25a3.75 3.75 0 11-7.5 0V4.5zM6 10.5a.75.75 0 01.75.75v1.5a5.25 5.25 0 1010.5 0v-1.5a.75.75 0 011.5 0v1.5a6.751 6.751 0 01-6 6.709v2.291h3a.75.75 0 010 1.5h-7.5a.75.75 0 010-1.5h3v-2.291a6.751 6.751 0 01-6-6.709v-1.5A.75.75 0 016 10.5z"/><path d="M3.53 2.47a.75.75 0 00-1.06 1.06l18 18a.75.75 0 101.06-1.06L3.53 2.47z"/></svg>;
+const XIcon      = () => <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="currentColor" className="w-4 h-4"><path fillRule="evenodd" d="M5.47 5.47a.75.75 0 011.06 0L12 10.94l5.47-5.47a.75.75 0 111.06 1.06L13.06 12l5.47 5.47a.75.75 0 11-1.06 1.06L12 13.06l-5.47 5.47a.75.75 0 01-1.06-1.06L10.94 12 5.47 6.53a.75.75 0 010-1.06z" clipRule="evenodd"/></svg>;
+const BanIcon    = () => <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="currentColor" className="w-4 h-4"><path fillRule="evenodd" d="M12 2.25c-5.385 0-9.75 4.365-9.75 9.75s4.365 9.75 9.75 9.75 9.75-4.365 9.75-9.75S17.385 2.25 12 2.25zm-1.72 6.97a.75.75 0 10-1.06 1.06L10.94 12l-1.72 1.72a.75.75 0 101.06 1.06L12 13.06l1.72 1.72a.75.75 0 101.06-1.06L13.06 12l1.72-1.72a.75.75 0 10-1.06-1.06L12 10.94l-1.72-1.72z" clipRule="evenodd"/></svg>;
+const HandIcon   = () => <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="currentColor" className="w-3.5 h-3.5"><path d="M10.5 1.875a1.125 1.125 0 012.25 0v8.219c.517.162 1.006.433 1.425.797l.034.026A4.978 4.978 0 0116.5 14.25v.996a4.5 4.5 0 01-4.5 4.5H12a4.5 4.5 0 01-4.5-4.5v-2.996a1.125 1.125 0 012.25 0v2.996a2.25 2.25 0 002.25 2.25h.001a2.25 2.25 0 002.25-2.25v-.996a2.727 2.727 0 00-.921-2.043l-.034-.026a2.727 2.727 0 00-1.795-.685 1.125 1.125 0 01-1.125-1.125V1.875z"/><path d="M6.75 6.75a1.125 1.125 0 000 2.25v4.503a7.5 7.5 0 0015 0v-4.503a1.125 1.125 0 000-2.25H6.75z"/></svg>;
+const KickIcon   = () => <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="currentColor" className="w-4 h-4"><path fillRule="evenodd" d="M7.5 3.75A1.5 1.5 0 006 5.25v13.5a1.5 1.5 0 001.5 1.5h6a1.5 1.5 0 001.5-1.5V15a.75.75 0 011.5 0v3.75a3 3 0 01-3 3h-6a3 3 0 01-3-3V5.25a3 3 0 013-3h6a3 3 0 013 3V9A.75.75 0 0115 9V5.25a1.5 1.5 0 00-1.5-1.5h-6zm10.72 4.72a.75.75 0 011.06 0l3 3a.75.75 0 010 1.06l-3 3a.75.75 0 11-1.06-1.06l1.72-1.72H9a.75.75 0 010-1.5h10.94l-1.72-1.72a.75.75 0 010-1.06z" clipRule="evenodd"/></svg>;
 
-export default function ParticipantsPanel({ participants = [], isHost, currentUserId, onRemove, onMute, onClose, meetingId }) {
-  const handlePromoteCoHost = async (userId) => {
-    try {
-      await api.post(`/meetings/${meetingId}/co-host`, { userId });
-      toast.success('Promoted to co-host');
-    } catch { toast.error('Failed to promote'); }
+export default function ParticipantsPanel({
+  participants = [],
+  currentUser,
+  isHost,
+  handRaisers = [],
+  onMute, onUnmute, onKick, onBan, onUnban,
+  onClose,
+}) {
+  const [bannedLocally, setBannedLocally] = useState(new Set());
+
+  const isHandRaised = (userId) => handRaisers.some((h) => h.userId === userId);
+
+  const handleBan = (userId, name) => {
+    if (!confirm(`Permanently ban ${name}?\nThey will NOT be able to rejoin this meeting.`)) return;
+    setBannedLocally((prev) => new Set([...prev, userId]));
+    onBan?.(userId);
   };
 
+  const handleUnban = (userId) => {
+    setBannedLocally((prev) => { const s = new Set(prev); s.delete(userId); return s; });
+    onUnban?.(userId);
+  };
+
+  const handleKick = (userId, name) => {
+    if (!confirm(`Remove ${name} from the meeting?\nThey can rejoin using the meeting link.`)) return;
+    onKick?.(userId);
+  };
+
+  const allParticipants = [
+    {
+      userId: String(currentUser?._id),
+      name: `${currentUser?.name} (You)`,
+      avatar: currentUser?.avatar,
+      isYou: true,
+    },
+    ...participants.filter((p) => p.userId !== String(currentUser?._id)),
+  ];
+
   return (
-    <div style={{ width: '100%', height: '100%', background: 'var(--bg-secondary)', borderLeft: '1px solid var(--border)', display: 'flex', flexDirection: 'column' }}>
-      <div style={{ padding: '12px 16px', borderBottom: '1px solid var(--border)', display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
-        <h3 style={{ fontFamily: 'Syne, sans-serif', fontSize: '0.9375rem', fontWeight: 700, color: 'var(--text-primary)' }}>
-          Participants ({participants.length})
-        </h3>
-        <button onClick={onClose} style={{ background: 'none', border: 'none', cursor: 'pointer', color: 'var(--text-muted)', fontSize: '1.25rem', lineHeight: 1 }}>×</button>
+    <div className="w-72 flex flex-col bg-gray-800 border-l border-gray-700 h-full">
+      {/* Header */}
+      <div className="flex items-center justify-between px-4 py-3 border-b border-gray-700">
+        <h2 className="font-semibold text-sm">
+          Participants ({allParticipants.length})
+        </h2>
+        <button onClick={onClose} className="text-gray-400 hover:text-white p-1">
+          <XIcon />
+        </button>
       </div>
 
-      <div style={{ flex: 1, overflowY: 'auto', padding: '0.75rem' }}>
-        <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
-          {participants.map((p, i) => {
-            const isCurrentUser = String(p.userId) === String(currentUserId) || p.isLocal;
-            return (
-              <div key={p.userId || i} style={{ padding: '10px 12px', borderRadius: 12, background: 'var(--bg-card)', border: '1px solid var(--border)', display: 'flex', alignItems: 'center', gap: 10 }}>
-                <Avatar name={p.name} size={34} />
-                <div style={{ flex: 1, minWidth: 0 }}>
-                  <div style={{ display: 'flex', alignItems: 'center', gap: 6, flexWrap: 'wrap' }}>
-                    <span style={{ fontFamily: 'Syne, sans-serif', fontSize: '0.8125rem', fontWeight: 600, color: 'var(--text-primary)' }}>
-                      {p.name}{isCurrentUser ? ' (You)' : ''}
-                    </span>
-                    {p.role && (
-                      <span className={`badge badge-${p.role === 'host' ? 'blue' : p.role === 'co-host' ? 'purple' : 'green'}`} style={{ fontSize: '0.6rem' }}>
-                        {p.role}
-                      </span>
-                    )}
-                  </div>
-                  <div style={{ display: 'flex', gap: 6, marginTop: 2 }}>
-                    {p.isMuted && <span style={{ fontSize: '0.7rem', color: 'var(--danger)' }}>🔇 muted</span>}
-                    {p.isVideoOff && <span style={{ fontSize: '0.7rem', color: 'var(--text-muted)' }}>📷 off</span>}
-                    {p.isHandRaised && <span style={{ fontSize: '0.7rem', color: 'var(--warning)' }}>✋ raised</span>}
-                  </div>
-                </div>
-                {isHost && !isCurrentUser && (
-                  <div style={{ display: 'flex', gap: 4, flexShrink: 0 }}>
-                    <button onClick={() => onMute(p.userId)} title="Mute" style={{ width: 28, height: 28, borderRadius: 7, border: '1px solid var(--border)', background: 'var(--bg-hover)', cursor: 'pointer', fontSize: '0.75rem', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>🔇</button>
-                    <button onClick={() => handlePromoteCoHost(p.userId)} title="Make co-host" style={{ width: 28, height: 28, borderRadius: 7, border: '1px solid var(--border)', background: 'var(--bg-hover)', cursor: 'pointer', fontSize: '0.75rem', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>⭐</button>
-                    <button onClick={() => { if (window.confirm(`Remove ${p.name}?`)) onRemove(p.userId); }} title="Remove" style={{ width: 28, height: 28, borderRadius: 7, border: '1px solid var(--danger)', background: 'rgba(239,68,68,0.1)', cursor: 'pointer', fontSize: '0.75rem', display: 'flex', alignItems: 'center', justifyContent: 'center', color: 'var(--danger)' }}>✕</button>
-                  </div>
-                )}
+      {/* List */}
+      <div className="flex-1 overflow-y-auto divide-y divide-gray-700/40">
+        {allParticipants.map((p) => {
+          const isBanned = bannedLocally.has(p.userId);
+          const handUp   = isHandRaised(p.userId);
+
+          return (
+            <div
+              key={p.userId}
+              className={`flex items-center gap-3 px-4 py-3 hover:bg-gray-700/30 transition-colors ${isBanned ? 'opacity-40' : ''}`}
+            >
+              {/* Avatar */}
+              <div className="w-8 h-8 rounded-full bg-blue-600 flex items-center justify-center text-sm font-bold shrink-0 overflow-hidden">
+                {p.avatar
+                  ? <img src={p.avatar} alt={p.name} className="w-full h-full object-cover" />
+                  : p.name?.[0]?.toUpperCase()
+                }
               </div>
-            );
-          })}
-        </div>
+
+              {/* Name + badges */}
+              <div className="flex-1 min-w-0">
+                <div className="flex items-center gap-1 flex-wrap">
+                  <span className="text-sm truncate">{p.name}</span>
+                  {handUp      && <span className="text-yellow-400" title="Hand raised"><HandIcon /></span>}
+                  {p.isMutedByHost && <span className="text-red-400" title="Muted by host"><MicOffIcon /></span>}
+                  {isBanned    && <span className="text-red-500" title="Banned">🚫</span>}
+                </div>
+                {isBanned && <span className="text-xs text-red-400">Banned</span>}
+              </div>
+
+              {/* Admin actions */}
+              {isHost && !p.isYou && (
+                <div className="flex items-center gap-1 shrink-0">
+                  {/* Mute / Unmute */}
+                  {p.isMutedByHost ? (
+                    <IconBtn title="Unmute participant" onClick={() => onUnmute?.(p.userId)} className="text-green-400 hover:bg-green-900/30">
+                      <MicOnIcon />
+                    </IconBtn>
+                  ) : (
+                    <IconBtn title="Mute participant (they can unmute themselves)" onClick={() => onMute?.(p.userId)} className="text-gray-400 hover:bg-gray-700">
+                      <MicOffIcon />
+                    </IconBtn>
+                  )}
+
+                  {/* Kick — temporary */}
+                  {!isBanned && (
+                    <IconBtn title="Remove (can rejoin)" onClick={() => handleKick(p.userId, p.name)} className="text-orange-400 hover:bg-orange-900/30">
+                      <KickIcon />
+                    </IconBtn>
+                  )}
+
+                  {/* Ban / Unban */}
+                  {isBanned ? (
+                    <IconBtn title="Unban" onClick={() => handleUnban(p.userId)} className="text-green-400 hover:bg-green-900/30">
+                      <BanIcon />
+                    </IconBtn>
+                  ) : (
+                    <IconBtn title="Ban permanently" onClick={() => handleBan(p.userId, p.name)} className="text-red-400 hover:bg-red-900/30">
+                      <BanIcon />
+                    </IconBtn>
+                  )}
+                </div>
+              )}
+            </div>
+          );
+        })}
       </div>
 
-      {isHost && participants.filter(p => !p.isLocal).length > 0 && (
-        <div style={{ padding: '0.75rem', borderTop: '1px solid var(--border)' }}>
-          <button className="btn-ghost" style={{ width: '100%', fontSize: '0.8125rem' }}
-            onClick={() => { participants.filter(p => !p.isLocal).forEach(p => onMute(p.userId)); toast.success('All muted'); }}>
-            🔇 Mute all participants
-          </button>
+      {/* Legend */}
+      {isHost && (
+        <div className="px-4 py-3 border-t border-gray-700 text-xs text-gray-500 space-y-1">
+          <div className="flex items-center gap-2"><MicOffIcon /><span>Mute — they can unmute themselves</span></div>
+          <div className="flex items-center gap-2"><KickIcon /><span>Remove — temporary, can rejoin</span></div>
+          <div className="flex items-center gap-2"><BanIcon /><span>Ban — permanent, cannot rejoin</span></div>
         </div>
       )}
     </div>
+  );
+}
+
+function IconBtn({ onClick, title, className, children }) {
+  return (
+    <button onClick={onClick} title={title} className={`p-1.5 rounded-lg transition-colors ${className}`}>
+      {children}
+    </button>
   );
 }
