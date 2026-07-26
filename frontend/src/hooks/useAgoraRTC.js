@@ -284,7 +284,19 @@ const useAgoraRTC = ({ appId, channel, token, uid, onUserJoined, onUserLeft }) =
     startScreenShare,
     stopScreenShare,
     client: clientRef.current,
+    join,
   };
+  const join = async () => {
+  try {
+    console.log('Joining Agora with:', { appId, channel, uid, hasToken: !!token });
+    await client.join(appId, channel, token, uid);
+    console.log('✅ Agora joined');
+    // ... rest of join
+  } catch (err) {
+    console.error('❌ Agora join failed:', err.code, err.message);
+    setError(err.message);
+  }
+};
 };
 
 export default useAgoraRTC;
