@@ -74,7 +74,7 @@ export default function LandingPage() {
           <div style={{ width: 1, height: 40, background: 'var(--border)' }} />
           <Stat val="∞" label="Participants" />
           <div style={{ width: 1, height: 40, background: 'var(--border)' }} />
-          <Stat val="$0" label="Cost forever" />
+          <Stat val="0" label="Cost forever" />
           <div style={{ width: 1, height: 40, background: 'var(--border)' }} />
           <Stat val="<100ms" label="Global latency" />
         </div>
